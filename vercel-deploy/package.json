@@ -1,0 +1,16 @@
+{
+  "name": "tech-map",
+  "version": "1.0.0",
+  "description": "技术关联分析地图",
+  "main": "index.html",
+  "scripts": {
+    "dev": "npx serve ."
+  },
+  "keywords": [
+    "tech",
+    "map",
+    "visualization"
+  ],
+  "author": "",
+  "license": "MIT"
+}

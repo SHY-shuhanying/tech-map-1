@@ -1,0 +1,3882 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>技术关联分析地图</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <style>
+        @layer utilities {
+            .card-hover {
+                transition: all 0.3s ease;
+            }
+            .card-hover:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+            }
+            .tech-line {
+                position: relative;
+                overflow: hidden;
+            }
+            .tech-line::before {
+                content: '';
+                position: absolute;
+                top: 0;
+                left: -100%;
+                width: 100%;
+                height: 100%;
+                background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+                animation: techLine 3s infinite;
+            }
+            @keyframes techLine {
+                0% { left: -100%; }
+                100% { left: 100%; }
+            }
+            .data-point {
+                position: relative;
+            }
+            .data-point::after {
+                content: '';
+                position: absolute;
+                width: 6px;
+                height: 6px;
+                border-radius: 50%;
+                background: var(--primary-color);
+                top: 50%;
+                right: -8px;
+                transform: translateY(-50%);
+            }
+            .minimal-border {
+                border: 1px solid rgba(0,0,0,0.08);
+            }
+            .minimal-border-t {
+                border-top: 1px solid rgba(0,0,0,0.08);
+            }
+            .soft-shadow {
+                box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            }
+            .sidebar-active {
+                background-color: var(--primary-color);
+                color: white;
+                border-radius: 8px;
+            }
+        }
+        :root {
+            --primary-color: #8E7DBE;
+            --secondary-color: #D4BEE4;
+            --accent-color: #F8B5D0;
+            --light-color: #F9F5FF;
+            --dark-color: #333344;
+            --text-color: #4A4A68;
+            --text-light: #8A8AA0;
+            --border-color: #E8E6F2;
+            --background-color: #FAFAFF;
+            --card-background: #FFFFFF;
+            --success-color: #10B981;
+            --warning-color: #F59E0B;
+            --error-color: #EF4444;
+        }
+        /* 洗护技术地图配色 - 清新蓝色系 */
+        .map-wash {
+            --primary-color: #4F46E5;
+            --secondary-color: #818CF8;
+            --accent-color: #C7D2FE;
+            --light-color: #EEF2FF;
+            --background-color: #F8FAFF;
+            --card-background: #FFFFFF;
+            --border-color: #E0E7FF;
+        }
+        /* 洁面技术地图配色 - 优雅紫色系 */
+        .map-clean {
+            --primary-color: #8B5CF6;
+            --secondary-color: #A78BFA;
+            --accent-color: #DDD6FE;
+            --light-color: #F5F3FF;
+            --background-color: #FAF5FF;
+            --card-background: #FFFFFF;
+            --border-color: #EDE9FE;
+        }
+        /* 护肤技术地图配色 - 自然绿色系 */
+        .map-skin {
+            --primary-color: #10B981;
+            --secondary-color: #34D399;
+            --accent-color: #A7F3D0;
+            --light-color: #ECFDF5;
+            --background-color: #F0FDF4;
+            --card-background: #FFFFFF;
+            --border-color: #D1FAE5;
+        }
+
+        .node-tooltip {
+            position: absolute;
+            background: white;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+            max-width: 300px;
+            z-index: 1000;
+            pointer-events: none;
+            transition: all 0.2s ease;
+        }
+        .product-tag {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 16px;
+            font-size: 12px;
+            margin: 4px;
+            transition: all 0.2s ease;
+            background: var(--light-color);
+            color: var(--primary-color);
+            border: 1px solid var(--secondary-color);
+        }
+        .product-tag:hover {
+            background: var(--secondary-color);
+            color: var(--dark-color);
+        }
+        .heatmap-legend {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .heatmap-cell {
+            width: 20px;
+            height: 20px;
+            border-radius: 4px;
+            transition: all 0.2s ease;
+        }
+        .heatmap-cell:hover {
+            transform: scale(1.05);
+        }
+        /* 自定义滚动条 */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: var(--light-color);
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: var(--secondary-color);
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--primary-color);
+        }
+        /* 加载动画 */
+        .loading-spinner {
+            border: 3px solid var(--light-color);
+            border-radius: 50%;
+            border-top: 3px solid var(--primary-color);
+            width: 32px;
+            height: 32px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        /* 数据线条装饰 */
+        .data-decoration {
+            position: absolute;
+            opacity: 0.1;
+            z-index: -1;
+        }
+        .data-line-horizontal {
+            width: 100%;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--primary-color), transparent);
+        }
+        .data-line-vertical {
+            height: 100%;
+            width: 1px;
+            background: linear-gradient(180deg, transparent, var(--primary-color), transparent);
+        }
+    </style>
+    <script>
+        // 登录验证
+        const VALID_USERNAME = 'SHY';
+        const VALID_PASSWORD = 'X-123456';
+
+        function handleLogin(event) {
+            event.preventDefault();
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const loginError = document.getElementById('loginError');
+
+            if (username === VALID_USERNAME && password === VALID_PASSWORD) {
+                // 登录成功，隐藏登录页面，显示主应用
+                document.getElementById('loginPage').classList.add('hidden');
+                document.getElementById('app').classList.remove('hidden');
+                // 初始化默认地图
+                initDefaultMap();
+            } else {
+                // 登录失败，显示错误信息
+                loginError.classList.remove('hidden');
+                document.getElementById('username').classList.add('border-red-500');
+                document.getElementById('password').classList.add('border-red-500');
+            }
+            return false;
+        }
+
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#3B82F6',
+                        secondary: '#6366F1',
+                        accent: '#10B981',
+                        warning: '#F59E0B',
+                        danger: '#EF4444',
+                        neutral: '#6B7280',
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    },
+                },
+            }
+        }
+    </script>
+</head>
+<body class="bg-[var(--background-color)] min-h-screen map-clean transition-colors duration-300">
+    <!-- 登录页面 -->
+    <div id="loginPage" class="fixed inset-0 bg-gradient-to-br from-[#8B5CF6] via-[#A78BFA] to-[#C7D2FE] flex items-center justify-center z-50">
+        <div class="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md mx-4 relative overflow-hidden">
+            <div class="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-[#8B5CF6] via-[#A78BFA] to-[#C7D2FE]"></div>
+            <div class="text-center mb-8">
+                <div class="w-16 h-16 rounded-full bg-gradient-to-br from-[#8B5CF6] to-[#A78BFA] flex items-center justify-center mx-auto mb-4">
+                    <i class="fa fa-lock text-white text-2xl"></i>
+                </div>
+                <h1 class="text-2xl font-bold text-[#333344]">X工-技术地图</h1>
+                <p class="text-[#8A8AA0] text-sm mt-2">请登录以访问技术关联分析平台</p>
+            </div>
+            <form id="loginForm" onsubmit="return handleLogin(event)">
+                <div class="mb-6">
+                    <label class="block text-[#4A4A68] text-sm font-medium mb-2" for="username">账号</label>
+                    <div class="relative">
+                        <span class="absolute left-4 top-1/2 transform -translate-y-1/2 text-[#8B5CF6]">
+                            <i class="fa fa-user"></i>
+                        </span>
+                        <input type="text" id="username" name="username" required
+                            class="w-full pl-12 pr-4 py-3 border border-[#E8E6F2] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#8B5CF6] focus:border-transparent transition-all"
+                            placeholder="请输入账号">
+                    </div>
+                </div>
+                <div class="mb-6">
+                    <label class="block text-[#4A4A68] text-sm font-medium mb-2" for="password">密码</label>
+                    <div class="relative">
+                        <span class="absolute left-4 top-1/2 transform -translate-y-1/2 text-[#8B5CF6]">
+                            <i class="fa fa-key"></i>
+                        </span>
+                        <input type="password" id="password" name="password" required
+                            class="w-full pl-12 pr-4 py-3 border border-[#E8E6F2] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#8B5CF6] focus:border-transparent transition-all"
+                            placeholder="请输入密码">
+                    </div>
+                </div>
+                <div id="loginError" class="hidden mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm">
+                    <i class="fa fa-exclamation-circle mr-2"></i>
+                    <span id="errorMessage">账号或密码错误，请重新输入</span>
+                </div>
+                <button type="submit"
+                    class="w-full py-3 bg-gradient-to-r from-[#8B5CF6] to-[#A78BFA] text-white font-medium rounded-lg hover:from-[#7C3AED] hover:to-[#8B5CF6] transition-all duration-300 shadow-lg hover:shadow-xl">
+                    <i class="fa fa-sign-in mr-2"></i>登录
+                </button>
+            </form>
+            <div class="mt-6 text-center">
+                <p class="text-[#8A8AA0] text-xs">默认账号：SHY | 默认密码：X-123456</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 主应用 -->
+    <div id="app" class="flex h-screen overflow-hidden hidden">
+        <!-- 侧边栏导航 -->
+        <aside class="w-64 bg-white minimal-border-r soft-shadow h-full sticky top-0">
+            <div class="p-6">
+                <div class="flex items-center space-x-3 mb-8">
+                    <div class="w-10 h-10 rounded-full bg-gradient-to-br from-[#8E7DBE] to-[#D4BEE4] flex items-center justify-center">
+                        <i class="fa fa-share-alt text-white text-xl"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-lg font-bold text-[#333344]">技术关联分析</h1>
+                        <p class="text-[#8A8AA0] text-xs">专业技术地图平台</p>
+                    </div>
+                </div>
+                <nav>
+                    <ul class="space-y-2">
+
+                        <li>
+                            <a href="#" class="flex items-center p-3 hover:bg-[var(--light-color)] transition-all duration-300" data-map="wash">
+                                <i class="fa fa-tint w-6 text-[#4F46E5]"></i>
+                                <span class="ml-3">洗护技术关联分析地图</span>
+                            </a>
+                        </li>
+                        <li>
+                            <a href="#" class="flex items-center p-3 hover:bg-[var(--light-color)] transition-all duration-300" data-map="clean">
+                                <i class="fa fa-hand-spock-o w-6 text-[#8B5CF6]"></i>
+                                <span class="ml-3">洁面技术关联分析地图</span>
+                            </a>
+                        </li>
+                        <li>
+                            <a href="#" class="flex items-center p-3 hover:bg-[var(--light-color)] transition-all duration-300" data-map="skin">
+                                <i class="fa fa-heart-o w-6 text-[#10B981]"></i>
+                                <span class="ml-3">护肤技术关联分析地图</span>
+                            </a>
+                        </li>
+                    </ul>
+                </nav>
+            </div>
+        </aside>
+
+        <!-- 主内容区 -->
+        <div class="flex-1 overflow-y-auto">
+            <!-- 顶部导航栏 -->
+            <nav class="bg-white sticky top-0 z-50 minimal-border-b soft-shadow">
+                <div class="container mx-auto px-6 py-4">
+                    <div class="flex justify-between items-center">
+                        <div>
+                            <h1 id="mapTitle" class="text-xl font-bold text-[#333344]">洁面技术关联分析地图</h1>
+                            <p class="text-[#8A8AA0] text-xs">专业技术地图平台</p>
+                        </div>
+                        <div class="flex items-center space-x-4">
+                            <button id="legendBtn" class="px-4 py-2 rounded-lg border border-[var(--border-color)] text-[var(--text-color)] hover:bg-[var(--light-color)] transition-all duration-300 flex items-center">
+                                <i class="fa fa-info-circle mr-2 text-[var(--primary-color)]"></i>图例
+                            </button>
+                            <button id="exportBtn" class="px-4 py-2 rounded-lg bg-[var(--primary-color)] text-white hover:bg-opacity-90 transition-all duration-300 flex items-center">
+                                <i class="fa fa-download mr-2"></i>导出
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </nav>
+
+            <!-- 内容区域 -->
+            <main class="container mx-auto px-6 py-6">
+                <!-- 统计概览 -->
+                <section class="mb-12">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                        <div class="bg-[var(--card-background)] rounded-xl p-6 border border-[var(--border-color)] shadow-lg card-hover relative overflow-hidden">
+                            <div class="data-decoration data-line-horizontal top-1/2"></div>
+                            <div class="flex items-center justify-between relative z-10">
+                                <div>
+                                    <p class="text-[var(--text-light)] text-sm font-medium">技术节点</p>
+                                    <p id="statTechCount" class="text-3xl font-bold text-[var(--dark-color)] mt-1">10</p>
+                                    <p class="text-xs text-[var(--text-light)] mt-1">核心技术领域</p>
+                                </div>
+                                <div class="w-14 h-14 rounded-full bg-[var(--light-color)] flex items-center justify-center">
+                                    <i class="fa fa-cube text-[var(--primary-color)] text-xl"></i>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="bg-[var(--card-background)] rounded-xl p-6 border border-[var(--border-color)] shadow-lg card-hover relative overflow-hidden">
+                            <div class="data-decoration data-line-horizontal top-1/2"></div>
+                            <div class="flex items-center justify-between relative z-10">
+                                <div>
+                                    <p class="text-[var(--text-light)] text-sm font-medium">关联文献</p>
+                                    <p id="statDocCount" class="text-3xl font-bold text-[var(--dark-color)] mt-1">23</p>
+                                    <p class="text-xs text-[var(--text-light)] mt-1">研究深度与广度</p>
+                                </div>
+                                <div class="w-14 h-14 rounded-full bg-[var(--light-color)] flex items-center justify-center">
+                                    <i class="fa fa-file-text text-[var(--primary-color)] text-xl"></i>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="bg-[var(--card-background)] rounded-xl p-6 border border-[var(--border-color)] shadow-lg card-hover relative overflow-hidden">
+                            <div class="data-decoration data-line-horizontal top-1/2"></div>
+                            <div class="flex items-center justify-between relative z-10">
+                                <div>
+                                    <p class="text-[var(--text-light)] text-sm font-medium">市场产品</p>
+                                    <p id="statProductCount" class="text-3xl font-bold text-[var(--dark-color)] mt-1">8</p>
+                                    <p class="text-xs text-[var(--text-light)] mt-1">商业化应用</p>
+                                </div>
+                                <div class="w-14 h-14 rounded-full bg-[var(--light-color)] flex items-center justify-center">
+                                    <i class="fa fa-shopping-bag text-[var(--primary-color)] text-xl"></i>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="bg-[var(--card-background)] rounded-xl p-6 border border-[var(--border-color)] shadow-lg card-hover relative overflow-hidden">
+                            <div class="data-decoration data-line-horizontal top-1/2"></div>
+                            <div class="flex items-center justify-between relative z-10">
+                                <div>
+                                    <p class="text-[var(--text-light)] text-sm font-medium">研究热度</p>
+                                    <p id="statHeatLevel" class="text-3xl font-bold text-[var(--primary-color)] mt-1">高</p>
+                                    <p class="text-xs text-[var(--text-light)] mt-1">行业关注程度</p>
+                                </div>
+                                <div class="w-14 h-14 rounded-full bg-[var(--light-color)] flex items-center justify-center">
+                                    <i class="fa fa-fire text-[var(--accent-color)] text-xl"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 技术关联分析地图 -->
+                <section class="mb-12">
+                    <div class="bg-[var(--card-background)] rounded-xl p-6 border border-[var(--border-color)] shadow-lg relative overflow-hidden">
+                        <div class="data-decoration data-line-horizontal top-20"></div>
+                        <div class="data-decoration data-line-vertical left-1/4"></div>
+                        <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4 relative z-10">
+                            <h2 class="text-xl font-bold text-[var(--dark-color)]">
+                                <i class="fa fa-share-alt mr-3 text-[var(--primary-color)]"></i>技术关联分析地图
+                            </h2>
+                            <div class="flex items-center space-x-3 bg-[var(--light-color)] px-4 py-2 rounded-lg">
+                                <span class="text-sm font-medium text-[var(--text-color)]">研究热度:</span>
+                                <div class="heatmap-legend">
+                                    <div class="heatmap-cell" style="background: var(--accent-color);"></div>
+                                    <div class="heatmap-cell" style="background: var(--secondary-color);"></div>
+                                    <div class="heatmap-cell" style="background: var(--primary-color);"></div>
+                                    <div class="heatmap-cell" style="background: var(--dark-color);"></div>
+                                </div>
+                                <span class="text-xs text-[var(--text-light)]">低→高</span>
+                            </div>
+                        </div>
+                        <div id="techMapContainer" class="relative z-10">
+                            <div id="techMap" class="h-[500px] border border-[var(--border-color)] rounded-lg bg-[var(--card-background)]"></div>
+                            <div id="nodeTooltip" class="node-tooltip hidden"></div>
+                        </div>
+                    </div>
+                </section>
+
+
+
+                <!-- 市场产品应用分析 -->
+                <section class="mb-12">
+                    <div class="bg-[var(--card-background)] rounded-xl p-6 border border-[var(--border-color)] shadow-lg relative overflow-hidden">
+                        <div class="data-decoration data-line-horizontal top-20"></div>
+                        <h2 class="text-xl font-bold text-[var(--dark-color)] mb-6 relative z-10">
+                            <i class="fa fa-shopping-bag mr-3 text-[var(--primary-color)]"></i>市场产品应用分析
+                        </h2>
+                        <div id="productTechRelation" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 relative z-10">
+                            <!-- 产品应用列表将在这里动态生成 -->
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 未来技术发展方向 -->
+                <section class="mb-12">
+                    <div class="bg-[var(--card-background)] rounded-xl p-6 border border-[var(--border-color)] shadow-lg relative overflow-hidden">
+                        <div class="data-decoration data-line-horizontal top-20"></div>
+                        <h2 class="text-xl font-bold text-[var(--dark-color)] mb-6 relative z-10">
+                            <i class="fa fa-rocket mr-3 text-[var(--primary-color)]"></i>未来技术发展方向
+                        </h2>
+                        <div id="futureTechGrid" class="grid grid-cols-1 md:grid-cols-3 gap-6 relative z-10">
+                            <!-- 未来技术发展方向卡片将通过JavaScript动态渲染 -->
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 创新建议 -->
+                <section class="mb-12">
+                    <div class="bg-[var(--card-background)] rounded-xl p-6 border border-[var(--border-color)] shadow-lg relative overflow-hidden">
+                        <div class="data-decoration data-line-horizontal top-20"></div>
+                        <h2 class="text-xl font-bold text-[var(--dark-color)] mb-6 relative z-10">
+                            <i class="fa fa-lightbulb-o mr-3 text-[var(--primary-color)]"></i>创新建议
+                        </h2>
+                        <div id="innovationGrid" class="space-y-6 relative z-10">
+                            <!-- 创新建议卡片将通过JavaScript动态渲染 -->
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 爆品脑洞 -->
+                <section class="mb-12">
+                    <div class="bg-[var(--card-background)] rounded-xl p-6 border border-[var(--border-color)] shadow-lg relative overflow-hidden">
+                        <div class="data-decoration data-line-horizontal top-20"></div>
+                        <h2 class="text-xl font-bold text-[var(--dark-color)] mb-6 relative z-10 cursor-pointer" id="brainstormingToggle">
+                            <i class="fa fa-rocket mr-3 text-[var(--primary-color)]"></i>爆品脑洞
+                            <i class="fa fa-chevron-down ml-2 text-sm"></i>
+                        </h2>
+                        <div id="brainstormingSection" class="space-y-8 relative z-10 hidden">
+                            <!-- 标杆选择 -->
+                            <div class="brainstorming-block">
+                                <h3 class="text-lg font-semibold text-[var(--dark-color)] mb-4">标杆选择</h3>
+                                <div id="benchmarkSelection" class="flex flex-wrap gap-4">
+                                    <!-- 标杆产品将通过JavaScript动态渲染 -->
+                                </div>
+                            </div>
+
+                            <!-- 价格选择 -->
+                            <div class="brainstorming-block">
+                                <h3 class="text-lg font-semibold text-[var(--dark-color)] mb-4">价格选择</h3>
+                                <div id="priceSelection" class="flex flex-wrap gap-4">
+                                    <!-- 价格区间将通过JavaScript动态渲染 -->
+                                </div>
+                            </div>
+
+                            <!-- 肤质选择 -->
+                            <div class="brainstorming-block">
+                                <h3 class="text-lg font-semibold text-[var(--dark-color)] mb-4">肤质选择</h3>
+                                <div id="skinTypeSelection" class="flex flex-wrap gap-4">
+                                    <!-- 肤质选项将通过JavaScript动态渲染 -->
+                                </div>
+                            </div>
+
+                            <!-- 肤感选择 -->
+                            <div class="brainstorming-block">
+                                <h3 class="text-lg font-semibold text-[var(--dark-color)] mb-4">肤感选择</h3>
+                                <div id="skinFeelSelection" class="flex flex-wrap gap-4">
+                                    <!-- 肤感选项将通过JavaScript动态渲染 -->
+                                </div>
+                            </div>
+
+                            <!-- 功效选择 -->
+                            <div class="brainstorming-block">
+                                <h3 class="text-lg font-semibold text-[var(--dark-color)] mb-4">功效选择</h3>
+                                <div id="functionSelection" class="grid grid-cols-2 md:grid-cols-3 gap-4">
+                                    <!-- 功效选项将通过JavaScript动态渲染 -->
+                                </div>
+                            </div>
+
+                            <!-- 技术选择 -->
+                            <div class="brainstorming-block">
+                                <h3 class="text-lg font-semibold text-[var(--dark-color)] mb-4">技术选择</h3>
+                                <div id="techSelection" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <!-- 技术选项将通过JavaScript动态渲染 -->
+                                </div>
+                            </div>
+
+                            <!-- 活性物选择 -->
+                            <div class="brainstorming-block">
+                                <h3 class="text-lg font-semibold text-[var(--dark-color)] mb-4">活性物选择（手动输入，逗号分隔）</h3>
+                                <div id="ingredientSelection" class="flex flex-wrap gap-4">
+                                    <textarea id="ingredientInput" class="w-full p-3 border border-[var(--border-color)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--primary-color)]" rows="3" placeholder="请输入活性物成分，如：透明质酸、烟酰胺、维生素C等，用逗号分隔"></textarea>
+                                </div>
+                            </div>
+
+                            <!-- 人群选择 -->
+                            <div class="brainstorming-block">
+                                <h3 class="text-lg font-semibold text-[var(--dark-color)] mb-4">人群选择</h3>
+                                <div id="crowdSelection" class="flex flex-wrap gap-4">
+                                    <!-- 人群选项将通过JavaScript动态渲染 -->
+                                </div>
+                            </div>
+
+                            <!-- 生成爆品建议 -->
+                            <div class="brainstorming-block">
+                                <button id="generateBrainstormBtn" class="px-6 py-3 bg-gradient-to-r from-[var(--primary-color)] to-[var(--secondary-color)] text-white font-medium rounded-lg hover:opacity-90 transition-all duration-300">
+                                    <i class="fa fa-magic mr-2"></i>生成爆品建议
+                                </button>
+                                <div id="brainstormingResult" class="mt-6 p-4 bg-[var(--light-color)] rounded-lg hidden">
+                                    <!-- 爆品建议结果将通过JavaScript动态渲染 -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 文献与技术关联 -->
+                <section class="mb-12">
+                    <div class="bg-[var(--card-background)] rounded-xl p-6 border border-[var(--border-color)] shadow-lg relative overflow-hidden">
+                        <div class="data-decoration data-line-horizontal top-20"></div>
+                        <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4 relative z-10">
+                            <h2 class="text-xl font-bold text-[var(--dark-color)]">
+                                <i class="fa fa-file-text mr-3 text-[var(--primary-color)]"></i>文献与技术关联
+                            </h2>
+                            <button id="refreshDocsBtn" class="flex items-center px-4 py-2 bg-[var(--light-color)] hover:bg-opacity-80 text-[var(--primary-color)] rounded-lg transition-all duration-300">
+                                <i class="fa fa-refresh mr-2"></i>刷新文献
+                            </button>
+                        </div>
+                        <div class="overflow-x-auto relative z-10">
+                            <div class="rounded-lg">
+                                <table class="min-w-full divide-y divide-[var(--border-color)]">
+                                    <thead class="bg-[var(--light-color)]">
+                                        <tr>
+                                            <th class="px-6 py-4 text-left text-sm font-semibold text-[var(--text-color)] uppercase tracking-wider">文献标题</th>
+                                            <th class="px-6 py-4 text-left text-sm font-semibold text-[var(--text-color)] uppercase tracking-wider">类型</th>
+                                            <th class="px-6 py-4 text-left text-sm font-semibold text-[var(--text-color)] uppercase tracking-wider">技术关键词</th>
+                                            <th class="px-6 py-4 text-left text-sm font-semibold text-[var(--text-color)] uppercase tracking-wider">研究热度</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="docTechTable" class="divide-y divide-[var(--border-color)]">
+                                        <!-- 文献列表将在这里动态生成 -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </main>
+
+            <!-- 页脚 -->
+            <footer class="bg-[var(--light-color)] py-8 border-t border-[var(--border-color)]">
+                <div class="container mx-auto px-6">
+                    <div class="flex flex-col md:flex-row justify-between items-center">
+                        <div class="mb-6 md:mb-0">
+                            <div class="flex items-center space-x-3">
+                                <div class="w-8 h-8 rounded-full bg-[var(--accent-color)] flex items-center justify-center">
+                                    <i class="fa fa-share-alt text-[var(--primary-color)] text-lg"></i>
+                                </div>
+                                <div>
+                                    <h3 class="text-lg font-bold text-[var(--dark-color)]">技术关联分析地图</h3>
+                                    <p class="text-[var(--text-light)] text-xs">基于文献与市场产品的技术热度分析</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="flex flex-col items-center md:items-end">
+                            <p class="text-[var(--text-light)] text-sm mb-2">© 2026 技术地图分析系统</p>
+                            <div class="flex space-x-4">
+                                <a href="#" class="text-[var(--text-light)] hover:text-[var(--primary-color)] transition-colors p-2 rounded-full hover:bg-[var(--accent-color)]">
+                                    <i class="fa fa-github text-lg"></i>
+                                </a>
+                                <a href="#" class="text-[var(--text-light)] hover:text-[var(--primary-color)] transition-colors p-2 rounded-full hover:bg-[var(--accent-color)]">
+                                    <i class="fa fa-linkedin text-lg"></i>
+                                </a>
+                                <a href="#" class="text-[var(--text-light)] hover:text-[var(--primary-color)] transition-colors p-2 rounded-full hover:bg-[var(--accent-color)]">
+                                    <i class="fa fa-twitter text-lg"></i>
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </footer>
+        </div>
+    </div>
+
+    <!-- 图例模态框 -->
+    <div id="legendModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white rounded-xl p-6 max-w-lg w-full mx-4 minimal-border soft-shadow relative overflow-hidden">
+            <div class="data-decoration data-line-horizontal top-20"></div>
+            <div class="flex justify-between items-center mb-6 relative z-10">
+                <h3 class="text-xl font-bold text-[#333344]">图例说明</h3>
+                <button onclick="document.getElementById('legendModal').classList.add('hidden')" class="w-8 h-8 rounded-full bg-[#F9F5FF] flex items-center justify-center hover:bg-[#D4BEE4] transition-all duration-300">
+                    <i class="fa fa-times text-[#8E7DBE] text-lg"></i>
+                </button>
+            </div>
+            <div class="space-y-6 relative z-10">
+                <div>
+                    <h4 class="text-base font-semibold text-[#333344] mb-3">节点大小与颜色</h4>
+                    <p class="text-[#4A4A68] text-sm">节点大小表示该技术的研究热度（文献中出现频次），颜色深浅表示市场应用程度。</p>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <div class="flex items-center">
+                        <div class="w-6 h-6 rounded-full bg-[#D4BEE4]"></div>
+                        <span class="text-[#4A4A68] text-sm ml-2">低热度/应用</span>
+                    </div>
+                    <div class="flex items-center">
+                        <div class="w-8 h-8 rounded-full bg-[#B8A8D9]"></div>
+                        <span class="text-[#4A4A68] text-sm ml-2">中热度/应用</span>
+                    </div>
+                    <div class="flex items-center">
+                        <div class="w-10 h-10 rounded-full bg-[#8E7DBE]"></div>
+                        <span class="text-[#4A4A68] text-sm ml-2">高热度/应用</span>
+                    </div>
+                </div>
+                <div>
+                    <h4 class="text-base font-semibold text-[#333344] mb-3">连线</h4>
+                    <p class="text-[#4A4A68] text-sm">连线粗细表示技术之间的关联强度，连线越粗表示关联越紧密。</p>
+                </div>
+                <div>
+                    <h4 class="text-base font-semibold text-[#333344] mb-3">节点颜色分组</h4>
+                    <div class="flex flex-wrap gap-2">
+                        <span class="product-tag">温和性技术</span>
+                        <span class="product-tag">天然成分</span>
+                        <span class="product-tag">功能添加剂</span>
+                        <span class="product-tag">配方技术</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 洗护技术节点数据 - 关联文献ID和热度
+        const washTechNodes = [
+            { 
+                id: 1, 
+                name: '硅油技术', 
+                group: 1, 
+                heat: 85,
+                docCount: 3,
+                docIds: [1, 2, 3],
+                relatedProducts: ['飘柔精华护理洗发露', '潘婷丝质顺滑洗发露', '沙宣修护水养洗发露'],
+                keywords: ['聚二甲基硅氧烷', '硅油', '柔顺', '护发']
+            },
+            { 
+                id: 2, 
+                name: '无硅油技术', 
+                group: 2, 
+                heat: 90,
+                docCount: 2,
+                docIds: [4, 5],
+                relatedProducts: ['滋源无硅油洗发露', '清扬植觉无硅油洗发露', '海飞丝无硅油洗发露'],
+                keywords: ['无硅油', '清爽', '控油', '头皮护理']
+            },
+            { 
+                id: 3, 
+                name: '氨基酸洗护', 
+                group: 3, 
+                heat: 95,
+                docCount: 4,
+                docIds: [6, 7, 8, 13],
+                relatedProducts: ['资生堂 fino 发膜', '珂润润浸保湿洗发水', '丝蓓绮臻护多效修护发膜'],
+                keywords: ['氨基酸', '温和', '保湿', '修护']
+            },
+            { 
+                id: 4, 
+                name: '植物提取物', 
+                group: 4, 
+                heat: 80,
+                docCount: 1,
+                docIds: [9],
+                relatedProducts: ['霸王首乌固发洗发露', '飘柔植物精选洗发露', '潘婷植物精萃洗发露'],
+                keywords: ['植物提取物', '天然', '滋养', '护发']
+            },
+            { 
+                id: 5, 
+                name: '阳离子调理剂', 
+                group: 5, 
+                heat: 75,
+                docCount: 0,
+                docIds: [],
+                relatedProducts: ['蜂花护发素', '飘柔护发素', '潘婷护发素'],
+                keywords: ['阳离子调理剂', '柔顺', '护发', '抗静电']
+            },
+            { 
+                id: 6, 
+                name: '硅油替代技术', 
+                group: 2, 
+                heat: 85,
+                docCount: 1,
+                docIds: [10],
+                relatedProducts: ['滋源无硅油洗发露', '清扬植觉无硅油洗发露', '海飞丝无硅油洗发露'],
+                keywords: ['硅油替代', '植物油脂', '天然成分', '清爽']
+            },
+            { 
+                id: 7, 
+                name: '头皮护理技术', 
+                group: 6, 
+                heat: 88,
+                docCount: 1,
+                docIds: [11],
+                relatedProducts: ['海飞丝去屑洗发露', '清扬男士去屑洗发露', '康王酮康唑洗剂'],
+                keywords: ['头皮护理', '去屑', '控油', '舒缓']
+            },
+            { 
+                id: 8, 
+                name: '防脱发技术', 
+                group: 6, 
+                heat: 92,
+                docCount: 1,
+                docIds: [12],
+                relatedProducts: ['霸王防脱洗发露', '章光101防脱洗发露', '巴黎欧莱雅防脱洗发露'],
+                keywords: ['防脱发', '生发', '毛囊护理', '营养']
+            },
+            { 
+                id: 9, 
+                name: '染发技术', 
+                group: 7, 
+                heat: 78,
+                docCount: 0,
+                docIds: [],
+                relatedProducts: ['巴黎欧莱雅染发膏', '施华蔻染发膏', '花王泡沫染发剂'],
+                keywords: ['染发', '发色持久', '护色', '损伤修复']
+            },
+            { 
+                id: 10, 
+                name: '烫发技术', 
+                group: 7, 
+                heat: 70,
+                docCount: 0,
+                docIds: [],
+                relatedProducts: ['威娜烫发水', '欧莱雅烫发水', '施华蔻烫发水'],
+                keywords: ['烫发', '卷发', '造型', '损伤修复']
+            }
+        ];
+
+        // 洗护技术关联数据
+        const washTechLinks = [
+            { source: 1, target: 2, value: 5 },
+            { source: 1, target: 3, value: 3 },
+            { source: 1, target: 5, value: 4 },
+            { source: 2, target: 3, value: 4 },
+            { source: 2, target: 4, value: 3 },
+            { source: 2, target: 6, value: 5 },
+            { source: 3, target: 4, value: 4 },
+            { source: 3, target: 5, value: 3 },
+            { source: 4, target: 7, value: 3 },
+            { source: 5, target: 7, value: 2 },
+            { source: 6, target: 7, value: 3 },
+            { source: 7, target: 8, value: 4 },
+            { source: 8, target: 9, value: 2 },
+            { source: 8, target: 10, value: 2 },
+            { source: 9, target: 10, value: 3 }
+        ];
+
+        // 洗护文献数据
+        const washDocuments = [
+            { id: 1, title: 'Amino Acid Surfactants: Applications in Personal Care Products', authors: 'Journal of Surfactants and Detergents', type: '研究论文', keywords: ['氨基酸', '表面活性剂', '洗发水'], heat: 95, url: 'https://link.springer.com/journal/11702' },
+            { id: 2, title: 'Silicone Polymers in Hair Care: Structure-Property Relationships', authors: 'Cosmetics & Toiletries', type: '研究论文', keywords: ['硅油', '头发护理', '柔顺'], heat: 90, url: 'https://www.cosmeticsandtoiletries.com/formulating/cleansing/skin-cleansing/article/12033748/silicone-polymers-in-hair-care-structure-property-relationships' },
+            { id: 3, title: 'Scalp Microbiome and Its Impact on Hair Health', authors: 'International Journal of Cosmetic Science', type: '研究论文', keywords: ['头皮护理', '微生物组', '头发健康'], heat: 92, url: 'https://onlinelibrary.wiley.com/journal/14682494' },
+            { id: 4, title: 'Plant Extracts in Hair Care: From Traditional to Modern Applications', authors: 'Molecules', type: '综述', keywords: ['植物提取物', '洗发水', '天然成分'], heat: 88, url: 'https://www.mdpi.com/journal/molecules' },
+            { id: 5, title: 'Anti-Hair Loss Cosmeceuticals: Efficacy and Safety', authors: 'Journal of Cosmetic Dermatology', type: '研究论文', keywords: ['防脱发', '生发', '护发'], heat: 93, url: 'https://onlinelibrary.wiley.com/journal/14732165' },
+            { id: 6, title: 'Sulfate-Free Surfactant Systems in Shampoo Formulations', authors: 'Journal of Cosmetic Science', type: '研究论文', keywords: ['无硫酸盐', '洗发水', '配方'], heat: 90, url: 'https://www.journalofcosmeticscience.org/' },
+            { id: 7, title: 'The Role of Cationic Polymers in Hair Care Products', authors: 'Cosmetic Science and Technology', type: '研究论文', keywords: ['阳离子聚合物', '护发', '调理剂'], heat: 85, url: 'https://www.springer.com/book/10.1007/978-3-030-20692-1' },
+            { id: 8, title: 'Natural Silicone Alternatives in Hair Care', authors: 'Natural Products Insider', type: '市场分析', keywords: ['硅油替代', '天然成分', '护发'], heat: 87, url: 'https://www.naturalproductsinsider.com' },
+            { id: 9, title: 'Hair Care Market Trends 2024: Consumer Preferences and Innovations', authors: 'Euromonitor International', type: '市场分析', keywords: ['洗发水', '市场趋势', '消费者偏好'], heat: 89, url: 'https://www.euromonitor.com' },
+            { id: 10, title: 'pH Balance in Scalp Care: Importance and Formulation Strategies', authors: 'International Journal of Cosmetic Science', type: '研究论文', keywords: ['pH值', '头皮护理', '配方'], heat: 86, url: 'https://onlinelibrary.wiley.com/journal/14682494' },
+            { id: 11, title: 'Sustainable Packaging in Hair Care: Environmental Impact and Consumer Perception', authors: 'Packaging Technology and Science', type: '研究论文', keywords: ['可持续包装', '洗发水', '环保'], heat: 84, url: 'https://onlinelibrary.wiley.com/journal/10943989' },
+            { id: 12, title: 'Hair Fiber Damage and Repair Mechanisms', authors: 'Journal of Cosmetic Science', type: '综述', keywords: ['头发损伤', '修护', '护发'], heat: 88, url: 'https://www.journalofcosmeticscience.org/' },
+            { id: 13, title: 'Microencapsulation Technology in Hair Care Products', authors: 'Journal of Microencapsulation', type: '研究论文', keywords: ['微胶囊', '护发', '活性成分'], heat: 85, url: 'https://www.tandfonline.com/journal/jmcn' }
+        ];
+
+        // 洗护产品数据
+        const washProducts = [
+            {
+                id: 1,
+                name: '飘柔精华护理洗发露',
+                brand: '飘柔',
+                price: 29.9,
+                rating: 4.5,
+                techKeywords: ['硅油技术', '阳离子调理剂'],
+                ingredients: ['聚二甲基硅氧烷', '阳离子聚合物', '植物提取物'],
+                description: '深层滋养，柔顺丝滑',
+                suitableFor: ['干性发质', '受损发质']
+            },
+            {
+                id: 2,
+                name: '潘婷丝质顺滑洗发露',
+                brand: '潘婷',
+                price: 39.9,
+                rating: 4.6,
+                techKeywords: ['硅油技术', '氨基酸洗护'],
+                ingredients: ['聚二甲基硅氧烷', '氨基酸表面活性剂', '维生素原B5'],
+                description: '丝质顺滑，深层修护',
+                suitableFor: ['所有肤质']
+            },
+            {
+                id: 3,
+                name: '沙宣修护水养洗发露',
+                brand: '沙宣',
+                price: 49.9,
+                rating: 4.7,
+                techKeywords: ['硅油技术', '阳离子调理剂'],
+                ingredients: ['聚二甲基硅氧烷', '阳离子聚合物', '保湿因子'],
+                description: '修护水养，持久顺滑',
+                suitableFor: ['受损发质', '干性发质']
+            },
+            {
+                id: 4,
+                name: '滋源无硅油洗发露',
+                brand: '滋源',
+                price: 59.9,
+                rating: 4.8,
+                techKeywords: ['无硅油技术', '植物提取物'],
+                ingredients: ['植物提取物', '氨基酸表面活性剂', '保湿因子'],
+                description: '无硅油配方，清爽控油',
+                suitableFor: ['油性发质', '头皮敏感']
+            },
+            {
+                id: 5,
+                name: '清扬植觉无硅油洗发露',
+                brand: '清扬',
+                price: 45.9,
+                rating: 4.6,
+                techKeywords: ['无硅油技术', '植物提取物'],
+                ingredients: ['植物提取物', '氨基酸表面活性剂', '去屑因子'],
+                description: '植物精华，清爽去屑',
+                suitableFor: ['油性发质', '有头屑']
+            },
+            {
+                id: 6,
+                name: '海飞丝无硅油洗发露',
+                brand: '海飞丝',
+                price: 39.9,
+                rating: 4.5,
+                techKeywords: ['无硅油技术', '头皮护理技术'],
+                ingredients: ['去屑因子', '氨基酸表面活性剂', '保湿因子'],
+                description: '无硅油配方，深层去屑',
+                suitableFor: ['油性发质', '有头屑']
+            },
+            {
+                id: 7,
+                name: '资生堂 fino 发膜',
+                brand: '资生堂',
+                price: 69.9,
+                rating: 4.9,
+                techKeywords: ['氨基酸洗护', '植物提取物'],
+                ingredients: ['氨基酸', '植物提取物', '保湿因子'],
+                description: '深层滋养，修护受损',
+                suitableFor: ['受损发质', '干性发质']
+            },
+            {
+                id: 8,
+                name: '珂润润浸保湿洗发水',
+                brand: '珂润',
+                price: 58.0,
+                rating: 4.7,
+                techKeywords: ['氨基酸洗护', '植物提取物'],
+                ingredients: ['氨基酸表面活性剂', '植物提取物', '保湿因子'],
+                description: '温和保湿，适合敏感头皮',
+                suitableFor: ['敏感头皮', '干性发质']
+            },
+            {
+                id: 9,
+                name: '施华蔻多效修护洗发水',
+                brand: '施华蔻',
+                price: 69.9,
+                rating: 4.7,
+                techKeywords: ['硅油技术', '氨基酸洗护'],
+                ingredients: ['聚二甲基硅氧烷', '氨基酸表面活性剂', '修护因子'],
+                description: '多效修护，强韧发丝',
+                suitableFor: ['受损发质', '干性发质']
+            }
+        ];
+
+        // 护肤技术节点数据
+        const skinTechNodes = [
+            { 
+                id: 1, 
+                name: '透明质酸技术', 
+                group: 1, 
+                heat: 95,
+                docCount: 4,
+                docIds: [1, 2, 3, 4],
+                relatedProducts: ['兰蔻小黑瓶精华液', '雅诗兰黛小棕瓶精华', '资生堂红腰子精华'],
+                keywords: ['透明质酸', '保湿', '补水', '修护']
+            },
+            { 
+                id: 2, 
+                name: '神经酰胺技术', 
+                group: 2, 
+                heat: 90,
+                docCount: 3,
+                docIds: [5, 6, 7],
+                relatedProducts: ['珂润面霜', 'Dr.Jart+蒂佳婷修复霜', '雅顿金胶'],
+                keywords: ['神经酰胺', '修护', '屏障', '保湿']
+            },
+            { 
+                id: 3, 
+                name: '烟酰胺技术', 
+                group: 3, 
+                heat: 92,
+                docCount: 2,
+                docIds: [8, 9],
+                relatedProducts: ['OLAY小白瓶', 'SK-II神仙水', 'The Ordinary烟酰胺精华'],
+                keywords: ['烟酰胺', '美白', '提亮', '控油']
+            },
+            { 
+                id: 4, 
+                name: '维生素C技术', 
+                group: 4, 
+                heat: 88,
+                docCount: 1,
+                docIds: [10],
+                relatedProducts: ['修丽可维C精华', '科颜氏维C精华', '乐敦CC精华'],
+                keywords: ['维生素C', '美白', '抗氧化', '提亮']
+            },
+            { 
+                id: 5, 
+                name: '视黄醇技术', 
+                group: 5, 
+                heat: 93,
+                docCount: 2,
+                docIds: [11, 12],
+                relatedProducts: ['露得清视黄醇精华', '雅顿粉胶', '资生堂悦薇精华'],
+                keywords: ['视黄醇', '抗老', '修护', '紧致']
+            },
+            { 
+                id: 6, 
+                name: '植物提取物', 
+                group: 6, 
+                heat: 85,
+                docCount: 1,
+                docIds: [13],
+                relatedProducts: ['科颜氏金盏花水', '馥蕾诗玫瑰水', '悦木之源菌菇水'],
+                keywords: ['植物提取物', '天然', '舒缓', '修护']
+            },
+            { 
+                id: 7, 
+                name: '胜肽技术', 
+                group: 7, 
+                heat: 87,
+                docCount: 1,
+                docIds: [14],
+                relatedProducts: ['雅诗兰黛线雕精华', '修丽可紫米精华', 'The Ordinary多肽精华'],
+                keywords: ['胜肽', '抗老', '紧致', '修护']
+            },
+            { 
+                id: 8, 
+                name: '氨基酸技术', 
+                group: 8, 
+                heat: 80,
+                docCount: 0,
+                docIds: [],
+                relatedProducts: ['珂润氨基酸洁面', '芙丽芳丝洁面', 'SK-II氨基酸洁面'],
+                keywords: ['氨基酸', '温和', '清洁', '保湿']
+            },
+            { 
+                id: 9, 
+                name: '防晒技术', 
+                group: 9, 
+                heat: 89,
+                docCount: 1,
+                docIds: [15],
+                relatedProducts: ['安耐晒金瓶', '碧柔防晒', '资生堂蓝胖子防晒'],
+                keywords: ['防晒', 'UV防护', '抗氧化', '隔离']
+            },
+            { 
+                id: 10, 
+                name: '益生菌技术', 
+                group: 10, 
+                heat: 82,
+                docCount: 0,
+                docIds: [],
+                relatedProducts: ['理肤泉B5修复霜', '雅漾舒缓精华', '欧缇丽葡萄籽精华'],
+                keywords: ['益生菌', '微生态', '修护', '舒缓']
+            }
+        ];
+
+        // 护肤技术关联数据
+        const skinTechLinks = [
+            { source: 1, target: 2, value: 5 },
+            { source: 1, target: 3, value: 3 },
+            { source: 1, target: 4, value: 4 },
+            { source: 2, target: 3, value: 4 },
+            { source: 2, target: 6, value: 3 },
+            { source: 3, target: 4, value: 5 },
+            { source: 3, target: 7, value: 3 },
+            { source: 4, target: 5, value: 4 },
+            { source: 5, target: 7, value: 5 },
+            { source: 6, target: 10, value: 4 },
+            { source: 7, target: 9, value: 3 },
+            { source: 8, target: 9, value: 2 },
+            { source: 9, target: 10, value: 3 },
+            { source: 1, target: 8, value: 2 },
+            { source: 2, target: 10, value: 4 }
+        ];
+
+        // 护肤文献数据
+        const skinDocuments = [
+            { id: 1, title: 'Hyaluronic Acid: A Key Molecule in Skin Hydration and Aging', authors: 'International Journal of Cosmetic Science', type: '研究论文', keywords: ['透明质酸', '护肤品', '保湿', '抗衰老'], heat: 95, url: 'https://onlinelibrary.wiley.com/journal/14682494' },
+            { id: 2, title: 'Ceramides and Skin Barrier Function: From Science to Application', authors: 'Journal of Investigative Dermatology', type: '研究论文', keywords: ['神经酰胺', '皮肤屏障', '护肤品', '修护'], heat: 93, url: 'https://www.jidonline.org' },
+            { id: 3, title: 'Niacinamide in Skin Care: Mechanisms of Action and Clinical Applications', authors: 'Journal of Cosmetic Dermatology', type: '研究论文', keywords: ['烟酰胺', '护肤品', '美白', '抗衰老'], heat: 94, url: 'https://onlinelibrary.wiley.com/journal/14732165' },
+            { id: 4, title: 'Retinol in Anti-Aging Cosmetics: Efficacy and Safety', authors: 'Dermatologic Surgery', type: '研究论文', keywords: ['视黄醇', '抗衰老', '护肤品', '功效'], heat: 92, url: 'https://onlinelibrary.wiley.com/journal/15244725' },
+            { id: 5, title: 'Vitamin C in Skin Care: Antioxidant and Collagen-Stimulating Properties', authors: 'Journal of the American Academy of Dermatology', type: '研究论文', keywords: ['维生素C', '护肤品', '美白', '抗氧化'], heat: 90, url: 'https://www.jaad.org' },
+            { id: 6, title: 'Peptides in Cosmetics: From Research to Application', authors: 'Molecules', type: '综述', keywords: ['胜肽', '护肤品', '抗老', '修护'], heat: 88, url: 'https://www.mdpi.com/journal/molecules' },
+            { id: 7, title: 'Sunscreen Formulation: Advances in UV Protection', authors: 'Journal of Cosmetic Science', type: '研究论文', keywords: ['防晒', '护肤品', 'UV防护', '配方'], heat: 91, url: 'https://www.journalofcosmeticscience.org/' },
+            { id: 8, title: 'Probiotics and Prebiotics in Skin Care: Microbiome Modulation', authors: 'Microbiome', type: '研究论文', keywords: ['益生菌', '皮肤微生物组', '护肤品', '修护'], heat: 89, url: 'https://microbiomejournal.biomedcentral.com' },
+            { id: 9, title: 'Plant Extracts in Cosmetics: Antioxidant and Anti-Inflammatory Properties', authors: 'Journal of Ethnopharmacology', type: '研究论文', keywords: ['植物提取物', '护肤品', '天然', '抗氧化'], heat: 87, url: 'https://www.sciencedirect.com/journal/journal-of-ethnopharmacology' },
+            { id: 10, title: 'Skin Care Market Trends 2024: Consumer Preferences and Innovations', authors: 'Euromonitor International', type: '市场分析', keywords: ['护肤品', '市场趋势', '消费者偏好', '创新'], heat: 90, url: 'https://www.euromonitor.com' },
+            { id: 11, title: 'Sustainable Cosmetics: Green Formulations and Packaging', authors: 'Sustainability', type: '研究论文', keywords: ['护肤品', '可持续', '绿色', '环保'], heat: 86, url: 'https://www.mdpi.com/journal/sustainability' },
+            { id: 12, title: 'Personalized Skin Care: AI and Skin Analysis Technology', authors: 'Journal of Cosmetic Dermatology', type: '研究论文', keywords: ['个性化护肤', 'AI', '皮肤分析', '护肤品'], heat: 85, url: 'https://onlinelibrary.wiley.com/journal/14732165' },
+            { id: 13, title: 'Skin Barrier Function in Atopic Dermatitis: Role of Cosmetics', authors: 'Journal of the European Academy of Dermatology and Venereology', type: '研究论文', keywords: ['皮肤屏障', '特应性皮炎', '护肤品', '敏感肌'], heat: 88, url: 'https://onlinelibrary.wiley.com/journal/14683083' },
+            { id: 14, title: 'Delivery Systems in Cosmetics: Enhancing Active Ingredient Penetration', authors: 'International Journal of Pharmaceutics', type: '研究论文', keywords: ['递送系统', '活性成分', '护肤品', '渗透'], heat: 87, url: 'https://www.sciencedirect.com/journal/international-journal-of-pharmaceutics' },
+            { id: 15, title: 'Anti-Aging Cosmeceuticals: Current Trends and Future Directions', authors: 'Cosmetics', type: '综述', keywords: ['抗衰老', '护肤品', '趋势', '未来'], heat: 92, url: 'https://www.mdpi.com/journal/cosmetics' }
+        ];
+
+        // 护肤产品数据
+        const skinProducts = [
+            {
+                id: 1,
+                name: '兰蔻小黑瓶精华液',
+                brand: '兰蔻',
+                price: 760,
+                rating: 4.8,
+                techKeywords: ['透明质酸技术', '胜肽技术'],
+                ingredients: ['透明质酸', '胜肽', '二裂酵母发酵产物溶胞物'],
+                description: '修护肌底，提升肌肤弹性',
+                suitableFor: ['所有肤质', '熟龄肌']
+            },
+            {
+                id: 2,
+                name: '雅诗兰黛小棕瓶精华',
+                brand: '雅诗兰黛',
+                price: 850,
+                rating: 4.7,
+                techKeywords: ['透明质酸技术', '胜肽技术'],
+                ingredients: ['透明质酸', '胜肽', '二裂酵母发酵产物溶胞物'],
+                description: '夜间修护，抗老紧致',
+                suitableFor: ['所有肤质', '熟龄肌']
+            },
+            {
+                id: 3,
+                name: '资生堂红腰子精华',
+                brand: '资生堂',
+                price: 680,
+                rating: 4.6,
+                techKeywords: ['透明质酸技术', '植物提取物'],
+                ingredients: ['透明质酸', '植物提取物', 'β-葡聚糖'],
+                description: '提升肌肤免疫力，修护肌底',
+                suitableFor: ['所有肤质', '敏感肌']
+            },
+            {
+                id: 4,
+                name: '珂润面霜',
+                brand: '珂润',
+                price: 188,
+                rating: 4.9,
+                techKeywords: ['神经酰胺技术', '氨基酸技术'],
+                ingredients: ['神经酰胺', '氨基酸', '甘油'],
+                description: '温和修护，深层保湿',
+                suitableFor: ['敏感肌', '干性肌']
+            },
+            {
+                id: 5,
+                name: 'Dr.Jart+蒂佳婷修复霜',
+                brand: 'Dr.Jart+',
+                price: 320,
+                rating: 4.7,
+                techKeywords: ['神经酰胺技术', '透明质酸技术'],
+                ingredients: ['神经酰胺', '透明质酸', '积雪草提取物'],
+                description: '舒缓修护，强化屏障',
+                suitableFor: ['敏感肌', '受损肌']
+            },
+            {
+                id: 6,
+                name: 'OLAY小白瓶',
+                brand: 'OLAY',
+                price: 280,
+                rating: 4.6,
+                techKeywords: ['烟酰胺技术', '透明质酸技术'],
+                ingredients: ['烟酰胺', '透明质酸', '泛醇'],
+                description: '美白淡斑，提亮肤色',
+                suitableFor: ['所有肤质', '暗沉肌']
+            },
+            {
+                id: 7,
+                name: '修丽可维C精华',
+                brand: '修丽可',
+                price: 1500,
+                rating: 4.8,
+                techKeywords: ['维生素C技术', '透明质酸技术'],
+                ingredients: ['维生素C', '透明质酸', '维生素E'],
+                description: '抗氧化，提亮肤色',
+                suitableFor: ['所有肤质', '暗沉肌']
+            },
+            {
+                id: 8,
+                name: '露得清视黄醇精华',
+                brand: '露得清',
+                price: 199,
+                rating: 4.5,
+                techKeywords: ['视黄醇技术', '透明质酸技术'],
+                ingredients: ['视黄醇', '透明质酸', '维生素E'],
+                description: '抗老紧致，淡化细纹',
+                suitableFor: ['所有肤质', '熟龄肌']
+            },
+            {
+                id: 9,
+                name: '雅漾舒缓特护面霜',
+                brand: '雅漾',
+                price: 228,
+                rating: 4.7,
+                techKeywords: ['神经酰胺技术', '植物提取物'],
+                ingredients: ['神经酰胺', '雅漾活泉水', '甘油'],
+                description: '舒缓敏感，深层保湿',
+                suitableFor: ['敏感肌', '耐受性差肌']
+            }
+        ];
+
+        // 洁面产品数据
+        const cleanProducts = [
+            {
+                id: 1,
+                name: '馥诺娜净润氨基酸洁面乳',
+                brand: '馥诺娜',
+                price: 128,
+                rating: 4.8,
+                techKeywords: ['氨基酸表面活性剂', '温和性改良技术'],
+                ingredients: ['椰油酰甘氨酸钠', '椰油酰苹果氨基酸', '甘油', '透明质酸'],
+                description: '温和清洁，深层保湿，适合敏感肌',
+                suitableFor: ['敏感肌', '干性肌', '中性肌']
+            },
+            {
+                id: 2,
+                name: 'C咖氨基酸控油洗面奶',
+                brand: 'C咖',
+                price: 89,
+                rating: 4.6,
+                techKeywords: ['氨基酸表面活性剂', '温和性改良技术', '控油技术'],
+                ingredients: ['椰油酰甘氨酸钠', '甘油', 'PCA锌', '茶树精油'],
+                description: '控油清洁，平衡水油，适合油性肌',
+                suitableFor: ['油性肌', '混合肌', '痘痘肌']
+            },
+            {
+                id: 3,
+                name: 'EltaMD安妍科氨基酸表活洗面奶',
+                brand: 'EltaMD',
+                price: 158,
+                rating: 4.7,
+                techKeywords: ['氨基酸表面活性剂', '温和性改良技术', '保湿技术'],
+                ingredients: ['椰油酰甘氨酸钠', '甘油', '透明质酸', '烟酰胺'],
+                description: '温和清洁，深层保湿，适合所有肤质',
+                suitableFor: ['所有肤质', '敏感肌']
+            },
+            {
+                id: 4,
+                name: '德妃紫苏紫洗面奶',
+                brand: '德妃',
+                price: 108,
+                rating: 4.5,
+                techKeywords: ['氨基酸表面活性剂', '温和性改良技术', '舒缓技术'],
+                ingredients: ['椰油酰甘氨酸钠', '甘油', '紫苏提取物', '芦荟提取物'],
+                description: '舒缓清洁，深层保湿，适合敏感肌',
+                suitableFor: ['敏感肌', '干性肌', '中性肌']
+            },
+            {
+                id: 5,
+                name: '雅诗兰黛红石榴洁面乳',
+                brand: '雅诗兰黛',
+                price: 280,
+                rating: 4.6,
+                techKeywords: ['氨基酸表面活性剂', '温和性改良技术', '抗氧化技术'],
+                ingredients: ['椰油酰甘氨酸钠', '甘油', '红石榴提取物', '维生素C'],
+                description: '抗氧化清洁，深层保湿，适合熟龄肌',
+                suitableFor: ['熟龄肌', '中性肌', '干性肌']
+            },
+            {
+                id: 6,
+                name: 'SK-II氨基酸洁面乳',
+                brand: 'SK-II',
+                price: 460,
+                rating: 4.9,
+                techKeywords: ['氨基酸表面活性剂', '温和性改良技术', '保湿技术'],
+                ingredients: ['椰油酰甘氨酸钠', '甘油', 'PITERA™', '透明质酸'],
+                description: '温和清洁，深层保湿，适合所有肤质',
+                suitableFor: ['所有肤质', '敏感肌']
+            }
+        ];
+
+        // 技术节点数据 - 关联文献ID和热度
+        const techNodes = [
+            { 
+                id: 1, 
+                name: '氨基酸表面活性剂', 
+                group: 1, 
+                heat: 100,
+                docCount: 4,
+                docIds: [1, 2, 3, 4],
+                relatedProducts: ['馥诺娜净润氨基酸洁面乳', 'C咖氨基酸控油洗面奶', 'EltaMD安妍科氨基酸表活洗面奶', '德妃紫苏紫洗面奶'],
+                keywords: ['椰油酰甘氨酸钠', '椰油酰苹果氨基酸', '氨基酸表活', '温和清洁']
+            },
+            { 
+                id: 2, 
+                name: '温和性改良技术', 
+                group: 1, 
+                heat: 90,
+                docCount: 1,
+                docIds: [5],
+                relatedProducts: ['馥诺娜净润氨基酸洁面乳', 'C咖氨基酸控油洗面奶', 'EltaMD安妍科氨基酸表活洗面奶'],
+                keywords: ['温和性', '刺激性', 'pH调节', '皮肤屏障']
+            },
+            { 
+                id: 3, 
+                name: '弱酸性配方', 
+                group: 2, 
+                heat: 85,
+                docCount: 2,
+                docIds: [6, 7],
+                relatedProducts: ['馥诺娜净润氨基酸洁面乳', 'C咖氨基酸控油洗面奶', '德妃紫苏紫洗面奶'],
+                keywords: ['弱酸性', 'pH值', '皮肤酸碱平衡', '温和']
+            },
+            { 
+                id: 4, 
+                name: '天然表面活性剂', 
+                group: 3, 
+                heat: 80,
+                docCount: 1,
+                docIds: [8],
+                relatedProducts: ['馥诺娜净润氨基酸洁面乳', 'C咖氨基酸控油洗面奶'],
+                keywords: ['天然表面活性剂', '植物来源', '温和', '环保']
+            },
+            { 
+                id: 5, 
+                name: '泡沫控制技术', 
+                group: 4, 
+                heat: 75,
+                docCount: 0,
+                docIds: [],
+                relatedProducts: ['EltaMD安妍科氨基酸表活洗面奶', '德妃紫苏紫洗面奶'],
+                keywords: ['泡沫控制', '泡沫丰富度', '清洁力', '使用感']
+            },
+            { 
+                id: 6, 
+                name: '保湿技术', 
+                group: 5, 
+                heat: 95,
+                docCount: 2,
+                docIds: [9, 10],
+                relatedProducts: ['馥诺娜净润氨基酸洁面乳', 'C咖氨基酸控油洗面奶', 'EltaMD安妍科氨基酸表活洗面奶', '德妃紫苏紫洗面奶'],
+                keywords: ['保湿', '滋润', '不紧绷', '皮肤屏障']
+            },
+            { 
+                id: 7, 
+                name: '控油技术', 
+                group: 6, 
+                heat: 88,
+                docCount: 1,
+                docIds: [11],
+                relatedProducts: ['C咖氨基酸控油洗面奶', 'EltaMD安妍科氨基酸表活洗面奶'],
+                keywords: ['控油', '清洁力', '毛孔', '油脂平衡']
+            },
+            { 
+                id: 8, 
+                name: '抗敏感技术', 
+                group: 7, 
+                heat: 92,
+                docCount: 1,
+                docIds: [12],
+                relatedProducts: ['馥诺娜净润氨基酸洁面乳', '德妃紫苏紫洗面奶'],
+                keywords: ['抗敏感', '舒缓', '皮肤屏障', '温和']
+            },
+            { 
+                id: 9, 
+                name: '抗氧化技术', 
+                group: 8, 
+                heat: 82,
+                docCount: 0,
+                docIds: [],
+                relatedProducts: ['馥诺娜净润氨基酸洁面乳', 'C咖氨基酸控油洗面奶'],
+                keywords: ['抗氧化', '自由基', '皮肤老化', '保护']
+            },
+            { 
+                id: 10, 
+                name: '植物提取物', 
+                group: 3, 
+                heat: 85,
+                docCount: 1,
+                docIds: [13],
+                relatedProducts: ['馥诺娜净润氨基酸洁面乳', 'C咖氨基酸控油洗面奶', '德妃紫苏紫洗面奶'],
+                keywords: ['植物提取物', '天然成分', '舒缓', '保湿']
+            }
+        ];
+
+        // 技术关联数据
+        const techLinks = [
+            { source: 1, target: 2, value: 5 },
+            { source: 1, target: 3, value: 4 },
+            { source: 1, target: 4, value: 3 },
+            { source: 1, target: 6, value: 4 },
+            { source: 2, target: 3, value: 4 },
+            { source: 2, target: 8, value: 5 },
+            { source: 3, target: 6, value: 3 },
+            { source: 3, target: 8, value: 4 },
+            { source: 4, target: 6, value: 3 },
+            { source: 4, target: 10, value: 5 },
+            { source: 5, target: 7, value: 4 },
+            { source: 6, target: 8, value: 3 },
+            { source: 7, target: 9, value: 3 },
+            { source: 8, target: 10, value: 4 },
+            { source: 9, target: 10, value: 3 }
+        ];
+
+        // 洁面文献数据
+        const cleanDocuments = [
+            { id: 1, title: 'Amino Acid Surfactants: Mildness and Efficacy in Facial Cleansers', authors: 'Journal of Cosmetic Science', type: '研究论文', keywords: ['氨基酸', '表面活性剂', '洁面'], heat: 95, url: 'https://www.journalofcosmeticscience.org/' },
+            { id: 2, title: 'Mildness Evaluation of Facial Cleansers: In Vitro and In Vivo Methods', authors: 'International Journal of Cosmetic Science', type: '研究论文', keywords: ['洁面', '温和性', '评价'], heat: 92, url: 'https://onlinelibrary.wiley.com/journal/14682494' },
+            { id: 3, title: 'pH and Skin Barrier Function: Implications for Cleanser Formulation', authors: 'Journal of the European Academy of Dermatology and Venereology', type: '研究论文', keywords: ['pH值', '皮肤屏障', '洁面'], heat: 90, url: 'https://onlinelibrary.wiley.com/journal/14683083' },
+            { id: 4, title: 'Natural Surfactants in Personal Care: Properties and Applications', authors: 'Molecules', type: '综述', keywords: ['天然表面活性剂', '洁面', '应用'], heat: 88, url: 'https://www.mdpi.com/journal/molecules' },
+            { id: 5, title: 'Moisturizing Systems in Facial Cleansers: A Formulation Perspective', authors: 'Cosmetics & Toiletries', type: '研究论文', keywords: ['洁面', '保湿', '配方'], heat: 93, url: 'https://www.cosmeticsandtoiletries.com' },
+            { id: 6, title: 'Sulfate-Free Cleansing Systems: Performance and Consumer Perception', authors: 'Journal of Surfactants and Detergents', type: '研究论文', keywords: ['无硫酸盐', '洁面', '性能'], heat: 89, url: 'https://link.springer.com/journal/11702' },
+            { id: 7, title: 'Plant Extracts in Facial Cleansers: Antioxidant and Anti-Inflammatory Properties', authors: 'Journal of Cosmetic Dermatology', type: '研究论文', keywords: ['植物提取物', '洁面', '抗氧化'], heat: 87, url: 'https://onlinelibrary.wiley.com/journal/14732165' },
+            { id: 8, title: 'Acne-Prone Skin and Cleansing: Formulation Strategies', authors: 'Dermatologic Therapy', type: '研究论文', keywords: ['洁面', '祛痘', '配方'], heat: 91, url: 'https://onlinelibrary.wiley.com/journal/13964178' },
+            { id: 9, title: 'Skin Microbiome and Cleansing: Impact of Surfactants', authors: 'Microbiome', type: '研究论文', keywords: ['皮肤微生物组', '洁面', '表面活性剂'], heat: 86, url: 'https://microbiomejournal.biomedcentral.com' },
+            { id: 10, title: 'Facial Cleanser Market Trends 2024: Consumer Preferences and Innovations', authors: 'Mintel', type: '市场分析', keywords: ['洁面', '市场趋势', '消费者偏好'], heat: 88, url: 'https://www.mintel.com' },
+            { id: 11, title: 'Sustainable Cleansing: Green Surfactants and Packaging', authors: 'Sustainability', type: '研究论文', keywords: ['洁面', '可持续', '绿色', '环保'], heat: 85, url: 'https://www.mdpi.com/journal/sustainability' },
+            { id: 12, title: 'Foam Properties in Facial Cleansers: Perception and Performance', authors: 'Colloids and Surfaces A: Physicochemical and Engineering Aspects', type: '研究论文', keywords: ['洁面', '泡沫', '性能'], heat: 84, url: 'https://www.sciencedirect.com/journal/colloids-and-surfaces-a-physicochemical-and-engineering-aspects' },
+            { id: 13, title: 'Cleansing and Skin Barrier: Balancing Efficacy and Safety', authors: 'Journal of Drugs in Dermatology', type: '综述', keywords: ['洁面', '皮肤屏障', '安全'], heat: 90, url: 'https://www.jddonline.com' }
+        ];
+
+        // 产品数据
+        const products = [
+            {
+                id: 1,
+                name: '馥诺娜净润氨基酸洁面乳',
+                brand: '馥诺娜',
+                price: 89.0,
+                rating: 4.8,
+                techKeywords: ['氨基酸表面活性剂', '温和性改良技术', '弱酸性配方', '保湿技术', '植物提取物'],
+                ingredients: ['椰油酰甘氨酸钠', '椰油酰苹果氨基酸', '甘油', '透明质酸钠', '植物提取物'],
+                description: '温和清洁，深层滋润，不紧绷',
+                suitableFor: ['所有肤质', '敏感肌']
+            },
+            {
+                id: 2,
+                name: 'C咖氨基酸控油洗面奶',
+                brand: 'C咖',
+                price: 69.0,
+                rating: 4.6,
+                techKeywords: ['氨基酸表面活性剂', '温和性改良技术', '控油技术', '抗氧化技术', '植物提取物'],
+                ingredients: ['椰油酰甘氨酸钠', '甘油', '控油成分', '抗氧化成分', '植物提取物'],
+                description: '深层清洁，控油平衡，清爽不紧绷',
+                suitableFor: ['油性肤质', '混合性肤质']
+            },
+            {
+                id: 3,
+                name: 'EltaMD安妍科氨基酸表活洗面奶',
+                brand: 'EltaMD',
+                price: 158.0,
+                rating: 4.9,
+                techKeywords: ['氨基酸表面活性剂', '温和性改良技术', '泡沫控制技术', '保湿技术', '控油技术'],
+                ingredients: ['椰油酰甘氨酸钠', '甘油', '透明质酸钠', '泡沫控制剂'],
+                description: '温和清洁，泡沫丰富，保湿不紧绷',
+                suitableFor: ['所有肤质']
+            },
+            {
+                id: 4,
+                name: '德妃紫苏紫洗面奶',
+                brand: '德妃',
+                price: 79.0,
+                rating: 4.7,
+                techKeywords: ['氨基酸表面活性剂', '温和性改良技术', '弱酸性配方', '抗敏感技术', '植物提取物'],
+                ingredients: ['椰油酰甘氨酸钠', '甘油', '紫苏提取物', '抗敏感成分'],
+                description: '温和清洁，舒缓敏感，深层滋润',
+                suitableFor: ['敏感肌', '干性肤质']
+            },
+            {
+                id: 5,
+                name: '旁氏米粹润泽洁面乳',
+                brand: '旁氏',
+                price: 29.9,
+                rating: 4.5,
+                techKeywords: ['氨基酸表面活性剂', '温和性改良技术', '保湿技术'],
+                ingredients: ['椰油酰甘氨酸钠', '甘油', '米粹精华'],
+                description: '温和清洁，米粹滋养，水润不紧绷',
+                suitableFor: ['所有肤质']
+            },
+            {
+                id: 6,
+                name: '珂润润浸保湿洁面泡沫',
+                brand: '珂润',
+                price: 88.0,
+                rating: 4.8,
+                techKeywords: ['氨基酸表面活性剂', '温和性改良技术', '泡沫控制技术', '保湿技术', '抗敏感技术'],
+                ingredients: ['椰油酰甘氨酸钠', '甘油', '神经酰胺', '泡沫控制剂'],
+                description: '温和清洁，泡沫细腻，保湿不紧绷',
+                suitableFor: ['敏感肌', '干性肤质']
+            },
+            {
+                id: 7,
+                name: '雅漾舒缓特护洁面乳',
+                brand: '雅漾',
+                price: 128.0,
+                rating: 4.7,
+                techKeywords: ['温和性改良技术', '抗敏感技术', '弱酸性配方'],
+                ingredients: ['温和表面活性剂', '雅漾活泉水', '抗敏感成分'],
+                description: '舒缓敏感，温和清洁，不刺激',
+                suitableFor: ['敏感肌', '耐受性差肌肤']
+            },
+            {
+                id: 8,
+                name: '理肤泉特安舒缓洁面乳',
+                brand: '理肤泉',
+                price: 135.0,
+                rating: 4.6,
+                techKeywords: ['温和性改良技术', '抗敏感技术', '弱酸性配方'],
+                ingredients: ['温和表面活性剂', '理肤泉温泉水', '抗敏感成分'],
+                description: '特安舒缓，温和清洁，保护皮肤屏障',
+                suitableFor: ['敏感肌', '耐受性差肌肤']
+            }
+        ];
+
+        // 未来技术发展方向数据
+        // 洁面未来技术发展方向数据
+        const cleanFutureTech = [
+            {
+                title: '生物表面活性剂技术',
+                desc: '利用生物技术生产的表面活性剂，具有更好的温和性和环保性，是未来洁面产品的重要发展方向。',
+                heat: 5,
+                icon: 'fa-biohazard',
+                tags: ['生物表面活性剂', '温和', '环保'],
+                docs: 12,
+                products: 5
+            },
+            {
+                title: '微生态平衡技术',
+                desc: '通过调节皮肤微生态平衡，开发更加温和、有效的洁面产品，保护皮肤健康。',
+                heat: 5,
+                icon: 'fa-bacteria',
+                tags: ['微生态平衡', '皮肤健康', '温和'],
+                docs: 15,
+                products: 3
+            },
+            {
+                title: '智能洁面技术',
+                desc: '结合人工智能技术，根据个人肤质、环境因素等，提供个性化的洁面方案。',
+                heat: 4,
+                icon: 'fa-robot',
+                tags: ['智能', '个性化', 'AI'],
+                docs: 8,
+                products: 2
+            },
+            {
+                title: '多功能合一技术',
+                desc: '开发集清洁、保湿、修护等多种功能于一体的洁面产品，简化护肤步骤。',
+                heat: 4,
+                icon: 'fa-magic',
+                tags: ['多功能', '一体化', '高效'],
+                docs: 10,
+                products: 6
+            },
+            {
+                title: '可持续包装技术',
+                desc: '开发环保、可持续的包装材料和设计，减少对环境的影响。',
+                heat: 3,
+                icon: 'fa-recycle',
+                tags: ['可持续', '环保', '包装'],
+                docs: 6,
+                products: 4
+            },
+            {
+                title: '定制化配方技术',
+                desc: '根据个人肤质、季节变化等因素，开发定制化的洁面配方。',
+                heat: 4,
+                icon: 'fa-user',
+                tags: ['定制化', '个性化', '配方'],
+                docs: 9,
+                products: 3
+            }
+        ];
+
+        // 洗护未来技术发展方向数据
+        const washFutureTech = [
+            {
+                title: '植物基硅油替代技术',
+                desc: '开发基于植物油脂的硅油替代技术，既保持硅油的柔顺效果，又避免硅油的油腻感和堵塞毛孔问题。',
+                heat: 5,
+                icon: 'fa-leaf',
+                tags: ['植物基', '硅油替代', '环保'],
+                docs: 14,
+                products: 7
+            },
+            {
+                title: '头皮微生态护理技术',
+                desc: '通过益生菌和益生元调节头皮菌群平衡，改善头皮健康，从根本上解决头皮屑、出油等问题。',
+                heat: 5,
+                icon: 'fa-bacteria',
+                tags: ['头皮微生态', '益生菌', '头皮健康'],
+                docs: 16,
+                products: 4
+            },
+            {
+                title: '个性化洗护方案',
+                desc: '基于AI和头皮检测技术，为用户提供个性化的洗护方案，包括产品推荐和使用方法。',
+                heat: 4,
+                icon: 'fa-robot',
+                tags: ['智能', '个性化', 'AI'],
+                docs: 9,
+                products: 3
+            },
+            {
+                title: '无水洗护技术',
+                desc: '开发无水或低水洗护产品，减少水资源使用，提高产品便携性，适合旅行和户外活动。',
+                heat: 4,
+                icon: 'fa-tint-slash',
+                tags: ['无水', '便携', '环保'],
+                docs: 7,
+                products: 5
+            },
+            {
+                title: '功能性洗护成分',
+                desc: '开发具有特定功能的洗护成分，如防脱发、促进头发生长、抗老化等，满足细分市场需求。',
+                heat: 4,
+                icon: 'fa-magic',
+                tags: ['功能性', '防脱发', '生发'],
+                docs: 11,
+                products: 6
+            },
+            {
+                title: '可持续包装技术',
+                desc: '开发可降解、可回收的包装材料，减少洗护产品的环境影响，提升品牌形象。',
+                heat: 3,
+                icon: 'fa-recycle',
+                tags: ['可持续', '环保', '包装'],
+                docs: 8,
+                products: 4
+            }
+        ];
+
+        // 护肤未来技术发展方向数据
+        const skinFutureTech = [
+            {
+                title: '微生态护肤技术',
+                desc: '通过益生菌、益生元和后生元调节皮肤微生态平衡，改善皮肤健康，增强皮肤屏障功能。',
+                heat: 5,
+                icon: 'fa-bacteria',
+                tags: ['微生态', '益生菌', '皮肤屏障'],
+                docs: 18,
+                products: 6
+            },
+            {
+                title: '个性化护肤方案',
+                desc: '基于AI和皮肤检测技术，为用户提供个性化的护肤方案，根据皮肤状态实时调整。',
+                heat: 5,
+                icon: 'fa-robot',
+                tags: ['智能', '个性化', 'AI'],
+                docs: 12,
+                products: 4
+            },
+            {
+                title: '生物活性肽技术',
+                desc: '开发具有特定功能的生物活性肽，如抗衰老、美白、修复等，提高产品功效。',
+                heat: 4,
+                icon: 'fa-dna',
+                tags: ['生物活性肽', '抗衰老', '美白'],
+                docs: 15,
+                products: 7
+            },
+            {
+                title: '可持续护肤技术',
+                desc: '开发环保、可持续的护肤成分和包装材料，减少对环境的影响，符合绿色消费趋势。',
+                heat: 4,
+                icon: 'fa-recycle',
+                tags: ['可持续', '环保', '绿色'],
+                docs: 9,
+                products: 5
+            },
+            {
+                title: '智能护肤技术',
+                desc: '结合智能设备和AI技术，实时监测皮肤状态并调整护肤方案，提高护肤效果。',
+                heat: 4,
+                icon: 'fa-mobile-alt',
+                tags: ['智能', '监测', 'AI'],
+                docs: 8,
+                products: 3
+            },
+            {
+                title: '靶向递送技术',
+                desc: '开发能够将活性成分精确递送到皮肤特定层次的技术，提高成分利用率和功效。',
+                heat: 5,
+                icon: 'fa-arrow-right',
+                tags: ['靶向递送', '活性成分', '高效'],
+                docs: 13,
+                products: 4
+            }
+        ];
+
+        // 洗护创新建议数据
+        const washInnovation = [
+            {
+                title: '植物基硅油替代技术',
+                desc: '开发基于植物油脂的硅油替代技术，既保持硅油的柔顺效果，又避免硅油的油腻感和堵塞毛孔问题。',
+                benefit: '改善头发健康，减少头皮问题，符合天然环保趋势',
+                potential: '中高，符合消费者对天然成分的需求',
+                difficulty: '中等，需要平衡效果和成本'
+            },
+            {
+                title: '个性化洗护方案',
+                desc: '基于AI和头皮检测技术，为用户提供个性化的洗护方案，包括产品推荐和使用方法。',
+                benefit: '提高用户满意度，增加产品复购率',
+                potential: '高，满足消费者对个性化产品的需求',
+                difficulty: '高，需要整合AI和检测技术'
+            },
+            {
+                title: '头皮微生态护理技术',
+                desc: '开发针对头皮微生态的护理技术，通过益生菌和益生元调节头皮菌群平衡，改善头皮健康。',
+                benefit: '从根本上解决头皮问题，提高头发质量',
+                potential: '高，符合微生态护肤趋势',
+                difficulty: '中等，需要深入研究头皮微生态'
+            },
+            {
+                title: '可持续包装技术',
+                desc: '开发可降解、可回收的包装材料，减少洗护产品的环境影响。',
+                benefit: '降低环境负担，提升品牌形象',
+                potential: '中，符合可持续发展趋势',
+                difficulty: '低，已有成熟的可持续包装技术'
+            },
+            {
+                title: '功能性洗护成分',
+                desc: '开发具有特定功能的洗护成分，如防脱发、促进头发生长、抗老化等。',
+                benefit: '满足特定消费者需求，提高产品附加值',
+                potential: '高，针对细分市场需求',
+                difficulty: '中等，需要临床验证功效'
+            },
+            {
+                title: '无水洗护技术',
+                desc: '开发无水或低水洗护产品，减少水资源使用，提高产品便携性。',
+                benefit: '节约水资源，方便旅行携带',
+                potential: '中，符合环保趋势',
+                difficulty: '中等，需要解决配方稳定性问题'
+            }
+        ];
+
+        // 护肤创新建议数据
+        const skinInnovation = [
+            {
+                title: '微生态护肤技术',
+                desc: '开发基于皮肤微生态的护肤技术，通过益生菌、益生元和后生元调节皮肤菌群平衡，改善皮肤健康。',
+                benefit: '从根本上改善皮肤问题，减少敏感肌发生',
+                potential: '高，符合微生态护肤趋势',
+                difficulty: '中等，需要深入研究皮肤微生态'
+            },
+            {
+                title: '个性化护肤方案',
+                desc: '基于AI和皮肤检测技术，为用户提供个性化的护肤方案，包括产品推荐和使用方法。',
+                benefit: '提高用户满意度，增加产品复购率',
+                potential: '高，满足消费者对个性化产品的需求',
+                difficulty: '高，需要整合AI和检测技术'
+            },
+            {
+                title: '生物活性成分递送技术',
+                desc: '开发高效的生物活性成分递送技术，如纳米载体、脂质体等，提高成分的渗透和吸收效率。',
+                benefit: '提高产品功效，减少有效成分用量',
+                potential: '高，提升产品竞争力',
+                difficulty: '高，需要先进的制剂技术'
+            },
+            {
+                title: '可持续护肤成分',
+                desc: '开发来源于可再生资源的护肤成分，如植物干细胞、发酵产物等，减少对环境的影响。',
+                benefit: '降低环境负担，提升品牌形象',
+                potential: '中高，符合可持续发展趋势',
+                difficulty: '中等，需要寻找稳定的可持续成分来源'
+            },
+            {
+                title: '智能护肤设备',
+                desc: '开发与护肤产品配套的智能设备，如皮肤检测仪、导入仪等，提高产品使用效果。',
+                benefit: '增强用户体验，提高产品附加值',
+                potential: '高，符合智能科技趋势',
+                difficulty: '高，需要整合硬件和软件技术'
+            },
+            {
+                title: '多功能护肤产品',
+                desc: '开发具有多种功能的护肤产品，如防晒+抗老、保湿+美白等，简化护肤步骤。',
+                benefit: '方便用户使用，减少产品数量',
+                potential: '中，满足消费者对便捷护肤的需求',
+                difficulty: '中等，需要平衡多种功能的效果'
+            }
+        ];
+
+        // 洁面创新建议数据
+        const cleanInnovation = [
+            {
+                title: '生物表面活性剂与植物提取物复配技术',
+                desc: '将生物表面活性剂与植物提取物复配，开发更加温和、有效的洁面产品。',
+                benefit: '提高产品的温和性和有效性，符合消费者对天然、安全产品的需求。',
+                potential: '高',
+                difficulty: '中'
+            },
+            {
+                title: '微生态平衡与皮肤屏障保护技术结合',
+                desc: '将微生态平衡技术与皮肤屏障保护技术结合，从根本上改善皮肤健康。',
+                benefit: '提高产品的护肤效果，满足消费者对皮肤健康的需求。',
+                potential: '高',
+                difficulty: '高'
+            },
+            {
+                title: '智能洁面系统开发',
+                desc: '开发智能洁面系统，根据个人肤质、环境因素等，提供个性化的洁面方案。',
+                benefit: '提高产品的个性化程度，满足消费者对定制化产品的需求。',
+                potential: '中',
+                difficulty: '高'
+            },
+            {
+                title: '多功能合一洁面产品开发',
+                desc: '开发集清洁、保湿、修护等多种功能于一体的洁面产品，简化护肤步骤。',
+                benefit: '提高产品的便捷性和性价比，满足消费者对高效护肤的需求。',
+                potential: '高',
+                difficulty: '中'
+            }
+        ];
+
+        // API模式设置
+        const API_MODE = false; // 设置为true启用API模式，false使用本地数据
+        const API_BASE_URL = 'http://localhost:3001/api';
+
+        // 从API加载地图数据
+        async function loadMapDataFromAPI(mapType) {
+            try {
+                // 显示加载状态
+                showLoadingState(true);
+
+                const [techData, docsData, productsData] = await Promise.all([
+                    fetch(`${API_BASE_URL}/tech/${mapType}?links=true`).then(r => r.json()),
+                    fetch(`${API_BASE_URL}/docs/${mapType}?limit=50`).then(r => r.json()),
+                    fetch(`${API_BASE_URL}/products/${mapType}?limit=20`).then(r => r.json())
+                ]);
+
+                if (techData.success && docsData.success && productsData.success) {
+                    const nodes = techData.nodes;
+                    const links = techData.links;
+                    const docs = docsData.documents;
+                    const products = productsData.products;
+
+                    // 更新统计概览
+                    document.getElementById('statTechCount').textContent = nodes.length;
+                    document.getElementById('statDocCount').textContent = docs.length;
+                    document.getElementById('statProductCount').textContent = products.length;
+
+                    // 更新最后更新时间
+                    updateLastUpdatedTime(techData.lastUpdated);
+
+                    // 重新渲染
+                    renderTechMap(nodes, links, mapType);
+                    renderProductTechRelation(nodes, products);
+                    renderDocTechTable(docs);
+                    renderFutureTech(mapType);
+                    renderInnovation(mapType);
+                    renderBrainstorming(mapType, nodes, products);
+                } else {
+                    console.error('API返回数据失败，切换到本地数据模式');
+                    loadMapData(mapType);
+                }
+            } catch (error) {
+                console.error('API加载失败，切换到本地数据模式:', error);
+                loadMapData(mapType);
+            } finally {
+                showLoadingState(false);
+            }
+        }
+
+        // 显示/隐藏加载状态
+        function showLoadingState(show) {
+            const containers = ['techMap', 'productTechRelation', 'futureTechGrid', 'docTechTable'];
+            containers.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) {
+                    if (show) {
+                        el.style.opacity = '0.5';
+                        el.style.pointerEvents = 'none';
+                    } else {
+                        el.style.opacity = '1';
+                        el.style.pointerEvents = 'auto';
+                    }
+                }
+            });
+        }
+
+        // 更新最后更新时间显示
+        function updateLastUpdatedTime(timestamp) {
+            if (!timestamp) return;
+            const date = new Date(timestamp);
+            const timeStr = date.toLocaleString('zh-CN', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+            console.log(`数据更新时间: ${timeStr}`);
+        }
+
+        // 加载地图数据
+        function loadMapData(mapType) {
+            console.log('loadMapData called with mapType:', mapType);
+            
+            // 切换页面颜色主题
+            document.body.className = `bg-[#FAFAFF] min-h-screen map-${mapType}`;
+
+            // 显示地图相关内容
+            const mapContent = document.querySelectorAll('main > section');
+            mapContent.forEach(section => {
+                section.style.display = 'block';
+            });
+
+            if (API_MODE) {
+                console.log('API_MODE is true, calling loadMapDataFromAPI');
+                loadMapDataFromAPI(mapType);
+                return;
+            }
+
+            let nodes, links, docs, products;
+
+            // 根据地图类型选择数据
+            switch(mapType) {
+                case 'wash':
+                    nodes = washTechNodes;
+                    links = washTechLinks;
+                    docs = washDocuments;
+                    products = washProducts;
+                    document.getElementById('mapTitle').textContent = '洗护技术关联分析地图';
+                    console.log('Selected washTechNodes:', washTechNodes.map(n => n.name));
+                    break;
+                case 'clean':
+                    nodes = techNodes;
+                    links = techLinks;
+                    docs = cleanDocuments;
+                    products = cleanProducts;
+                    document.getElementById('mapTitle').textContent = '洁面技术关联分析地图';
+                    console.log('Selected techNodes:', techNodes.map(n => n.name));
+                    break;
+                case 'skin':
+                    nodes = skinTechNodes;
+                    links = skinTechLinks;
+                    docs = skinDocuments;
+                    products = skinProducts;
+                    document.getElementById('mapTitle').textContent = '护肤技术关联分析地图';
+                    console.log('Selected skinTechNodes:', skinTechNodes.map(n => n.name));
+                    break;
+                default:
+                    nodes = techNodes;
+                    links = techLinks;
+                    docs = documents;
+                    products = cleanProducts;
+                    document.getElementById('mapTitle').textContent = '洁面技术关联分析地图';
+                    console.log('Selected default techNodes:', techNodes.map(n => n.name));
+                    break;
+            }
+
+            // 更新统计概览
+            document.getElementById('statTechCount').textContent = nodes.length;
+            document.getElementById('statDocCount').textContent = docs.length;
+            document.getElementById('statProductCount').textContent = products.length;
+
+            // 重新渲染技术关联分析地图
+            renderTechMap(nodes, links, mapType);
+
+            // 更新市场产品应用分析
+            renderProductTechRelation(nodes, products);
+
+            // 更新文献与技术关联
+            renderDocTechTable(docs);
+
+            // 更新未来技术发展方向
+            renderFutureTech(mapType);
+
+            // 更新创新建议
+            renderInnovation(mapType);
+
+            // 更新爆品脑洞
+            renderBrainstorming(mapType, nodes, products);
+        }
+
+        // 渲染技术关联分析地图
+        function renderTechMap(nodes, links, mapType) {
+            const container = document.getElementById('techMap');
+            if (!container) return;
+
+            // 清空容器
+            container.innerHTML = '';
+
+            // 设置地图尺寸
+            const width = container.clientWidth;
+            const height = container.clientHeight;
+
+            // 创建SVG元素
+            const svg = d3.select(container)
+                .append('svg')
+                .attr('width', width)
+                .attr('height', height);
+
+            // 创建力导向图
+            const simulation = d3.forceSimulation(nodes)
+                .force('link', d3.forceLink(links).id(d => d.id).distance(100))
+                .force('charge', d3.forceManyBody().strength(-300))
+                .force('center', d3.forceCenter(width / 2, height / 2));
+
+            // 根据地图类型选择颜色
+            let colorScheme;
+            switch(mapType) {
+                case 'wash':
+                    colorScheme = {
+                        high: '#4A70B0',
+                        medium: '#6B90C7',
+                        low: '#A8C0E0',
+                        lowest: '#D4E0F0'
+                    };
+                    break;
+                case 'clean':
+                    colorScheme = {
+                        high: '#7A6DA0',
+                        medium: '#8E7DBE',
+                        low: '#B8A8D9',
+                        lowest: '#D4BEE4'
+                    };
+                    break;
+                case 'skin':
+                    colorScheme = {
+                        high: '#68A047',
+                        medium: '#88C057',
+                        low: '#A8D077',
+                        lowest: '#C8E097'
+                    };
+                    break;
+                default:
+                    colorScheme = {
+                        high: '#7A6DA0',
+                        medium: '#8E7DBE',
+                        low: '#B8A8D9',
+                        lowest: '#D4BEE4'
+                    };
+            }
+
+            // 创建连线
+            const link = svg.append('g')
+                .selectAll('line')
+                .data(links)
+                .enter()
+                .append('line')
+                .attr('stroke', '#E8E6F2')
+                .attr('stroke-width', d => Math.sqrt(d.value));
+
+            // 创建节点
+            const node = svg.append('g')
+                .selectAll('circle')
+                .data(nodes)
+                .enter()
+                .append('circle')
+                .attr('r', d => Math.sqrt(d.heat) / 2 + 5)
+                .attr('fill', d => {
+                    // 根据研究热度设置颜色
+                    if (d.heat >= 90) return colorScheme.high;
+                    if (d.heat >= 80) return colorScheme.medium;
+                    if (d.heat >= 70) return colorScheme.low;
+                    return colorScheme.lowest;
+                })
+                .call(d3.drag()
+                    .on('start', dragstarted)
+                    .on('drag', dragged)
+                    .on('end', dragended));
+
+            // 添加节点标签
+            const label = svg.append('g')
+                .selectAll('text')
+                .data(nodes)
+                .enter()
+                .append('text')
+                .text(d => d.name)
+                .attr('font-size', '12px')
+                .attr('dx', 12)
+                .attr('dy', 4)
+                .attr('fill', '#333344');
+
+            // 添加节点 tooltip
+            node.on('mouseover', function(event, d) {
+                const tooltip = document.getElementById('nodeTooltip');
+                if (tooltip) {
+                    // 查找相关文献
+                    let docs;
+                    switch(mapType) {
+                        case 'wash':
+                            docs = washDocuments;
+                            break;
+                        case 'clean':
+                            docs = documents;
+                            break;
+                        case 'skin':
+                            docs = skinDocuments;
+                            break;
+                        default:
+                            docs = documents;
+                    }
+                    const relatedDocs = docs.filter(doc => d.docIds.includes(doc.id));
+                    const docTitles = relatedDocs.slice(0, 3).map(doc => doc.title).join('<br>');
+                    
+                    tooltip.innerHTML = `
+                        <div class="font-semibold text-[#333344]">${d.name}</div>
+                        <div class="text-sm text-[#8A8AA0] mt-1">研究热度: ${d.heat}</div>
+                        <div class="text-sm text-[#8A8AA0] mt-1">关联文献: ${d.docCount}篇</div>
+                        <div class="text-sm text-[#8A8AA0] mt-1">相关产品: ${d.relatedProducts.length}个</div>
+                        <div class="mt-2">
+                            <div class="text-xs font-medium text-[#4A4A68]">相关文献:</div>
+                            <div class="text-xs text-[#8A8AA0] mt-1">${docTitles}</div>
+                        </div>
+                    `;
+                    tooltip.style.display = 'block';
+                    tooltip.style.left = (event.pageX + 10) + 'px';
+                    tooltip.style.top = (event.pageY + 10) + 'px';
+                }
+            })
+            .on('mouseout', function() {
+                const tooltip = document.getElementById('nodeTooltip');
+                if (tooltip) {
+                    tooltip.style.display = 'none';
+                }
+            });
+
+            // 力导向图更新
+            simulation.on('tick', function() {
+                link
+                    .attr('x1', d => d.source.x)
+                    .attr('y1', d => d.source.y)
+                    .attr('x2', d => d.target.x)
+                    .attr('y2', d => d.target.y);
+
+                node
+                    .attr('cx', d => d.x = Math.max(10, Math.min(width - 10, d.x)))
+                    .attr('cy', d => d.y = Math.max(10, Math.min(height - 10, d.y)));
+
+                label
+                    .attr('x', d => d.x)
+                    .attr('y', d => d.y);
+            });
+
+            // 拖拽函数
+            function dragstarted(event, d) {
+                if (!event.active) simulation.alphaTarget(0.3).restart();
+                d.fx = d.x;
+                d.fy = d.y;
+            }
+
+            function dragged(event, d) {
+                d.fx = event.x;
+                d.fy = event.y;
+            }
+
+            function dragended(event, d) {
+                if (!event.active) simulation.alphaTarget(0);
+                d.fx = null;
+                d.fy = null;
+            }
+        }
+
+        // 渲染市场产品应用分析
+        function renderProductTechRelation(nodes, products) {
+            const container = document.getElementById('productTechRelation');
+            if (!container) return;
+
+            let html = '';
+            products.forEach((product, index) => {
+                const techTags = product.techKeywords.map(tech => `<span class="product-tag">${tech}</span>`).join('');
+                const ingredientTags = product.ingredients.map(ingredient => `<span class="product-tag">${ingredient}</span>`).join('');
+                const suitableTags = product.suitableFor.map(suitable => `<span class="product-tag">${suitable}</span>`).join('');
+
+                html += `
+                    <div class="bg-[var(--light-color)] rounded-xl p-6 border border-[var(--border-color)] shadow-md transition-all duration-300">
+                        <div class="flex justify-between items-start mb-4">
+                            <div>
+                                <h3 class="text-lg font-semibold text-[var(--dark-color)]">${product.name}</h3>
+                                <p class="text-sm text-[var(--text-light)] mt-1">${product.brand} | ¥${product.price} | ⭐ ${product.rating}</p>
+                            </div>
+                            <button class="px-3 py-1 bg-[var(--primary-color)] text-white text-sm rounded-lg hover:bg-opacity-90 transition-colors" onclick="showProductReviews(${index}, '${product.name}', '${product.brand}', ${product.price}, ${product.rating}, '${product.description}', '${product.techKeywords.join(',')}', '${product.ingredients.join(',')}', '${product.suitableFor.join(',')}')">
+                                查看评价
+                            </button>
+                        </div>
+                        <p class="text-sm text-[var(--text-color)] mb-4">${product.description}</p>
+                        <div class="mb-3">
+                            <p class="text-xs font-medium text-[var(--text-color)] mb-2">核心技术</p>
+                            <div class="flex flex-wrap gap-2">
+                                ${techTags}
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <p class="text-xs font-medium text-[var(--text-color)] mb-2">主要成分</p>
+                            <div class="flex flex-wrap gap-2">
+                                ${ingredientTags}
+                            </div>
+                        </div>
+                        <div>
+                            <p class="text-xs font-medium text-[var(--text-color)] mb-2">适合人群</p>
+                            <div class="flex flex-wrap gap-2">
+                                ${suitableTags}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+
+            container.innerHTML = html;
+        }
+
+        // 显示产品评价
+        function showProductReviews(index, name, brand, price, rating, description, techKeywords, ingredients, suitableFor) {
+            // 获取产品评价数据
+            const reviews = getProductReviews(name);
+            
+            // 创建模态框
+            const modal = document.createElement('div');
+            modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+            modal.innerHTML = `
+                <div class="bg-white rounded-2xl shadow-2xl max-w-3xl w-full mx-4 overflow-hidden">
+                    <div class="bg-gradient-to-r from-[#8E7DBE] to-[#D4BEE4] p-6">
+                        <div class="flex justify-between items-center">
+                            <div>
+                                <h3 class="text-xl font-bold text-white">${name}</h3>
+                                <p class="text-white/80 text-sm mt-1">${brand} | ¥${price}</p>
+                            </div>
+                            <button onclick="this.closest('.fixed').remove()" class="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center hover:bg-white/30 transition-colors">
+                                <i class="fa fa-times text-white text-lg"></i>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="p-6">
+                        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+                            <div class="bg-[#F9F5FF] rounded-xl p-4 text-center">
+                                <div class="text-3xl font-bold text-[#8E7DBE]">${rating}</div>
+                                <div class="text-yellow-400 text-lg mt-1">${'★'.repeat(Math.floor(rating))}${'☆'.repeat(5-Math.floor(rating))}</div>
+                                <div class="text-xs text-[#8A8AA0] mt-2">综合评分</div>
+                            </div>
+                            <div class="bg-[#F9F5FF] rounded-xl p-4 text-center">
+                                <div class="text-3xl font-bold text-[#8E7DBE]">${reviews.totalReviews}</div>
+                                <div class="text-sm text-[#8A8AA0] mt-2">总评论数</div>
+                            </div>
+                            <div class="bg-[#F9F5FF] rounded-xl p-4 text-center">
+                                <div class="text-3xl font-bold text-[#8E7DBE]">${reviews.positiveRate}%</div>
+                                <div class="text-sm text-[#8A8AA0] mt-2">好评率</div>
+                            </div>
+                        </div>
+                        
+                        <div class="mb-6">
+                            <h4 class="font-semibold text-[#333344] mb-3 flex items-center">
+                                <i class="fa fa-star text-[#F8B5D0] mr-2"></i>各渠道评分
+                            </h4>
+                            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                ${reviews.channels.map(channel => `
+                                    <div class="bg-white border border-[#E8E6F2] rounded-lg p-3 text-center">
+                                        <div class="text-sm text-[#8A8AA0]">${channel.name}</div>
+                                        <div class="text-xl font-bold text-[#333344] mt-1">${channel.rating}</div>
+                                        <div class="text-xs text-[#8A8AA0]">${channel.reviews}条评论</div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                        
+                        <div class="mb-4">
+                            <h4 class="font-semibold text-[#333344] mb-3 flex items-center">
+                                <i class="fa fa-thumbs-up text-green-500 mr-2"></i>优点
+                            </h4>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                ${reviews.Pros.map(pro => `
+                                    <div class="flex items-start">
+                                        <i class="fa fa-check-circle text-green-500 mt-1 mr-2"></i>
+                                        <span class="text-sm text-[#4A4A68]">${pro}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                        
+                        <div>
+                            <h4 class="font-semibold text-[#333344] mb-3 flex items-center">
+                                <i class="fa fa-thumbs-down text-red-400 mr-2"></i>缺点
+                            </h4>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                ${reviews.Cons.map(con => `
+                                    <div class="flex items-start">
+                                        <i class="fa fa-times-circle text-red-400 mt-1 mr-2"></i>
+                                        <span class="text-sm text-[#4A4A68]">${con}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+
+        // 获取产品评价数据
+        function getProductReviews(productName) {
+            // 产品评价数据
+            const productReviews = {
+                '飘柔精华护理洗发露': {
+                    Pros: ['洗后头发柔顺', '香味持久', '价格实惠', '泡沫丰富'],
+                    Cons: ['有点油腻', '控油效果一般', '包装设计普通'],
+                    totalReviews: 25680,
+                    positiveRate: 85,
+                    channels: [
+                        { name: '天猫', rating: 4.5, reviews: 12500 },
+                        { name: '京东', rating: 4.6, reviews: 8900 },
+                        { name: '小红书', rating: 4.4, reviews: 3200 },
+                        { name: '抖音', rating: 4.3, reviews: 1080 }
+                    ]
+                },
+                '潘婷丝质顺滑洗发露': {
+                    Pros: ['丝质顺滑效果好', '修护受损发质', '持久留香', '适合各种发质'],
+                    Cons: ['价格偏高', '瓶身设计不够人性化', '用量较大'],
+                    totalReviews: 18920,
+                    positiveRate: 88,
+                    channels: [
+                        { name: '天猫', rating: 4.6, reviews: 9200 },
+                        { name: '京东', rating: 4.7, reviews: 6500 },
+                        { name: '小红书', rating: 4.5, reviews: 2800 },
+                        { name: '抖音', rating: 4.4, reviews: 420 }
+                    ]
+                },
+                '沙宣修护水养洗发露': {
+                    Pros: ['深层修护', '水润效果好', '改善毛躁', '专业沙龙级效果'],
+                    Cons: ['价格较贵', '香味过于浓郁', '不太适合油性发质'],
+                    totalReviews: 12450,
+                    positiveRate: 82,
+                    channels: [
+                        { name: '天猫', rating: 4.7, reviews: 6100 },
+                        { name: '京东', rating: 4.7, reviews: 4200 },
+                        { name: '小红书', rating: 4.5, reviews: 1800 },
+                        { name: '抖音', rating: 4.4, reviews: 350 }
+                    ]
+                },
+                '滋源无硅油洗发露': {
+                    Pros: ['无硅油配方', '清爽控油', '天然成分', '适合敏感头皮'],
+                    Cons: ['洗后有点干涩', '泡沫较少', '价格偏高'],
+                    totalReviews: 15890,
+                    positiveRate: 86,
+                    channels: [
+                        { name: '天猫', rating: 4.8, reviews: 7800 },
+                        { name: '京东', rating: 4.7, reviews: 5100 },
+                        { name: '小红书', rating: 4.6, reviews: 2500 },
+                        { name: '抖音', rating: 4.5, reviews: 490 }
+                    ]
+                },
+                '清扬植觉无硅油洗发露': {
+                    Pros: ['植物成分', '清爽不油腻', '去屑效果好', '持久留香'],
+                    Cons: ['价格略高', '瓶口设计不便', '包装易破损'],
+                    totalReviews: 11230,
+                    positiveRate: 83,
+                    channels: [
+                        { name: '天猫', rating: 4.6, reviews: 5600 },
+                        { name: '京东', rating: 4.5, reviews: 3800 },
+                        { name: '小红书', rating: 4.4, reviews: 1500 },
+                        { name: '抖音', rating: 4.3, reviews: 330 }
+                    ]
+                },
+                '海飞丝无硅油洗发露': {
+                    Pros: ['去屑效果显著', '清爽控油', '品牌信赖度高', '泡沫丰富'],
+                    Cons: ['香味一般', '洗后有点干涩', '价格偏高'],
+                    totalReviews: 20340,
+                    positiveRate: 84,
+                    channels: [
+                        { name: '天猫', rating: 4.5, reviews: 10200 },
+                        { name: '京东', rating: 4.6, reviews: 7200 },
+                        { name: '小红书', rating: 4.4, reviews: 2500 },
+                        { name: '抖音', rating: 4.3, reviews: 440 }
+                    ]
+                },
+                '资生堂 fino 发膜': {
+                    Pros: ['深层滋养', '修护受损发质', '性价比高', '使用方便'],
+                    Cons: ['质地较厚重', '需要冲洗彻底', '包装较大不便携带'],
+                    totalReviews: 9870,
+                    positiveRate: 90,
+                    channels: [
+                        { name: '天猫', rating: 4.9, reviews: 4800 },
+                        { name: '京东', rating: 4.8, reviews: 3200 },
+                        { name: '小红书', rating: 4.9, reviews: 1600 },
+                        { name: '抖音', rating: 4.7, reviews: 270 }
+                    ]
+                },
+                '珂润润浸保湿洗发水': {
+                    Pros: ['温和不刺激', '保湿效果好', '适合敏感肌', '无硅油配方'],
+                    Cons: ['泡沫较少', '价格偏高', '香味较淡'],
+                    totalReviews: 7650,
+                    positiveRate: 89,
+                    channels: [
+                        { name: '天猫', rating: 4.7, reviews: 3800 },
+                        { name: '京东', rating: 4.8, reviews: 2600 },
+                        { name: '小红书', rating: 4.6, reviews: 1100 },
+                        { name: '抖音', rating: 4.5, reviews: 150 }
+                    ]
+                },
+                '兰蔻小黑瓶精华液': {
+                    Pros: ['修护肌底', '提升肌肤弹性', '改善肤质', '品牌信赖度高'],
+                    Cons: ['价格昂贵', '用量较大', '包装设计普通'],
+                    totalReviews: 18560,
+                    positiveRate: 92,
+                    channels: [
+                        { name: '天猫', rating: 4.8, reviews: 8900 },
+                        { name: '京东', rating: 4.9, reviews: 6200 },
+                        { name: '小红书', rating: 4.8, reviews: 3100 },
+                        { name: '抖音', rating: 4.7, reviews: 360 }
+                    ]
+                },
+                '雅诗兰黛小棕瓶精华': {
+                    Pros: ['夜间修护效果好', '抗老紧致', '改善肤色', '质地轻盈'],
+                    Cons: ['价格昂贵', '需要长期使用', '香味较淡'],
+                    totalReviews: 21450,
+                    positiveRate: 91,
+                    channels: [
+                        { name: '天猫', rating: 4.7, reviews: 10500 },
+                        { name: '京东', rating: 4.8, reviews: 7200 },
+                        { name: '小红书', rating: 4.7, reviews: 3400 },
+                        { name: '抖音', rating: 4.6, reviews: 350 }
+                    ]
+                },
+                '资生堂红腰子精华': {
+                    Pros: ['提升肌肤免疫力', '修护肌底', '适合敏感肌', '质地清爽'],
+                    Cons: ['价格偏高', '瓶身设计不便', '效果需要时间体现'],
+                    totalReviews: 12380,
+                    positiveRate: 88,
+                    channels: [
+                        { name: '天猫', rating: 4.6, reviews: 6100 },
+                        { name: '京东', rating: 4.7, reviews: 4200 },
+                        { name: '小红书', rating: 4.6, reviews: 1800 },
+                        { name: '抖音', rating: 4.5, reviews: 280 }
+                    ]
+                },
+                '珂润面霜': {
+                    Pros: ['温和修护', '深层保湿', '适合敏感肌', '性价比高'],
+                    Cons: ['质地较厚重', '夏天使用有点油腻', '包装设计普通'],
+                    totalReviews: 16780,
+                    positiveRate: 90,
+                    channels: [
+                        { name: '天猫', rating: 4.9, reviews: 8200 },
+                        { name: '京东', rating: 4.8, reviews: 5600 },
+                        { name: '小红书', rating: 4.7, reviews: 2600 },
+                        { name: '抖音', rating: 4.6, reviews: 380 }
+                    ]
+                },
+                'Dr.Jart+蒂佳婷修复霜': {
+                    Pros: ['舒缓修护', '强化屏障', '适合敏感肌', '质地轻盈'],
+                    Cons: ['价格偏高', '用量较大', '包装易破损'],
+                    totalReviews: 9870,
+                    positiveRate: 87,
+                    channels: [
+                        { name: '天猫', rating: 4.7, reviews: 4800 },
+                        { name: '京东', rating: 4.6, reviews: 3200 },
+                        { name: '小红书', rating: 4.8, reviews: 1600 },
+                        { name: '抖音', rating: 4.5, reviews: 270 }
+                    ]
+                },
+                'OLAY小白瓶': {
+                    Pros: ['美白淡斑', '提亮肤色', '价格实惠', '质地轻盈'],
+                    Cons: ['需要建立耐受', '香味较浓', '效果需要时间体现'],
+                    totalReviews: 22340,
+                    positiveRate: 86,
+                    channels: [
+                        { name: '天猫', rating: 4.6, reviews: 11200 },
+                        { name: '京东', rating: 4.7, reviews: 7800 },
+                        { name: '小红书', rating: 4.5, reviews: 3000 },
+                        { name: '抖音', rating: 4.4, reviews: 340 }
+                    ]
+                },
+                '修丽可维C精华': {
+                    Pros: ['抗氧化效果好', '提亮肤色', '专业医美品牌', '浓度高'],
+                    Cons: ['价格昂贵', '质地较粘稠', '需要避光保存'],
+                    totalReviews: 8540,
+                    positiveRate: 89,
+                    channels: [
+                        { name: '天猫', rating: 4.8, reviews: 4200 },
+                        { name: '京东', rating: 4.9, reviews: 2900 },
+                        { name: '小红书', rating: 4.8, reviews: 1300 },
+                        { name: '抖音', rating: 4.7, reviews: 140 }
+                    ]
+                },
+                '露得清视黄醇精华': {
+                    Pros: ['抗老紧致', '淡化细纹', '价格实惠', '品牌信赖度高'],
+                    Cons: ['需要建立耐受', '有点刺激', '包装设计普通'],
+                    totalReviews: 11230,
+                    positiveRate: 84,
+                    channels: [
+                        { name: '天猫', rating: 4.5, reviews: 5600 },
+                        { name: '京东', rating: 4.6, reviews: 3800 },
+                        { name: '小红书', rating: 4.4, reviews: 1600 },
+                        { name: '抖音', rating: 4.3, reviews: 230 }
+                    ]
+                },
+                '馥诺娜净润氨基酸洁面乳': {
+                    Pros: ['温和清洁', '深层保湿', '适合敏感肌', '氨基酸配方'],
+                    Cons: ['泡沫较少', '价格偏高', '包装设计普通'],
+                    totalReviews: 7860,
+                    positiveRate: 91,
+                    channels: [
+                        { name: '天猫', rating: 4.8, reviews: 3900 },
+                        { name: '京东', rating: 4.9, reviews: 2600 },
+                        { name: '小红书', rating: 4.7, reviews: 1200 },
+                        { name: '抖音', rating: 4.6, reviews: 160 }
+                    ]
+                },
+                'C咖氨基酸控油洗面奶': {
+                    Pros: ['控油清洁', '平衡水油', '适合油性肌', '氨基酸配方'],
+                    Cons: ['洗后有点干涩', '香味较淡', '包装易破损'],
+                    totalReviews: 9240,
+                    positiveRate: 85,
+                    channels: [
+                        { name: '天猫', rating: 4.6, reviews: 4600 },
+                        { name: '京东', rating: 4.5, reviews: 3100 },
+                        { name: '小红书', rating: 4.7, reviews: 1400 },
+                        { name: '抖音', rating: 4.4, reviews: 140 }
+                    ]
+                },
+                'EltaMD安妍科氨基酸表活洗面奶': {
+                    Pros: ['温和清洁', '深层保湿', '适合所有肤质', '氨基酸配方'],
+                    Cons: ['价格偏高', '起泡较慢', '包装设计普通'],
+                    totalReviews: 11280,
+                    positiveRate: 93,
+                    channels: [
+                        { name: '天猫', rating: 4.9, reviews: 5500 },
+                        { name: '京东', rating: 4.8, reviews: 3800 },
+                        { name: '小红书', rating: 4.9, reviews: 1800 },
+                        { name: '抖音', rating: 4.7, reviews: 180 }
+                    ]
+                },
+                '德妃紫苏紫洗面奶': {
+                    Pros: ['舒缓清洁', '深层保湿', '适合敏感肌', '植物成分'],
+                    Cons: ['泡沫较少', '价格偏高', '香味较淡'],
+                    totalReviews: 6890,
+                    positiveRate: 88,
+                    channels: [
+                        { name: '天猫', rating: 4.5, reviews: 3400 },
+                        { name: '京东', rating: 4.6, reviews: 2200 },
+                        { name: '小红书', rating: 4.7, reviews: 1100 },
+                        { name: '抖音', rating: 4.5, reviews: 190 }
+                    ]
+                },
+                '旁氏米粹润泽洁面乳': {
+                    Pros: ['温和清洁', '米粹滋养', '价格实惠', '适合所有肤质'],
+                    Cons: ['洗后有点干涩', '包装设计普通', '香味较淡'],
+                    totalReviews: 14560,
+                    positiveRate: 87,
+                    channels: [
+                        { name: '天猫', rating: 4.5, reviews: 7200 },
+                        { name: '京东', rating: 4.6, reviews: 4900 },
+                        { name: '小红书', rating: 4.4, reviews: 2100 },
+                        { name: '抖音', rating: 4.3, reviews: 360 }
+                    ]
+                },
+                '珂润润浸保湿洁面泡沫': {
+                    Pros: ['温和清洁', '泡沫细腻', '保湿不紧绷', '适合敏感肌'],
+                    Cons: ['价格偏高', '用量较大', '包装易破损'],
+                    totalReviews: 9870,
+                    positiveRate: 90,
+                    channels: [
+                        { name: '天猫', rating: 4.8, reviews: 4800 },
+                        { name: '京东', rating: 4.7, reviews: 3300 },
+                        { name: '小红书', rating: 4.8, reviews: 1500 },
+                        { name: '抖音', rating: 4.6, reviews: 270 }
+                    ]
+                },
+                '雅漾舒缓特护洁面乳': {
+                    Pros: ['舒缓敏感', '温和清洁', '不刺激', '适合耐受性差肌肤'],
+                    Cons: ['价格偏高', '清洁力一般', '香味较淡'],
+                    totalReviews: 6540,
+                    positiveRate: 89,
+                    channels: [
+                        { name: '天猫', rating: 4.7, reviews: 3200 },
+                        { name: '京东', rating: 4.6, reviews: 2200 },
+                        { name: '小红书', rating: 4.7, reviews: 1000 },
+                        { name: '抖音', rating: 4.5, reviews: 140 }
+                    ]
+                },
+                '理肤泉特安舒缓洁面乳': {
+                    Pros: ['特安舒缓', '温和清洁', '保护皮肤屏障', '适合敏感肌'],
+                    Cons: ['价格偏高', '清洁力一般', '包装设计普通'],
+                    totalReviews: 7890,
+                    positiveRate: 88,
+                    channels: [
+                        { name: '天猫', rating: 4.6, reviews: 3900 },
+                        { name: '京东', rating: 4.7, reviews: 2600 },
+                        { name: '小红书', rating: 4.6, reviews: 1200 },
+                        { name: '抖音', rating: 4.5, reviews: 190 }
+                    ]
+                }
+            };
+            
+            // 返回对应产品的评价，如果没有则返回默认评价
+            return productReviews[productName] || {
+                Pros: ['产品质量好', '使用效果不错', '包装精美'],
+                Cons: ['价格偏高', '使用方法复杂', '效果需要时间体现'],
+                totalReviews: 1000,
+                positiveRate: 85,
+                channels: [
+                    { name: '天猫', rating: 4.5, reviews: 500 },
+                    { name: '京东', rating: 4.4, reviews: 300 },
+                    { name: '小红书', rating: 4.6, reviews: 150 },
+                    { name: '抖音', rating: 4.3, reviews: 50 }
+                ]
+            };
+        }
+
+        // 渲染文献与技术关联
+        function renderDocTechTable(docs) {
+            const container = document.getElementById('docTechTable');
+            if (!container) return;
+
+            let html = '';
+            docs.forEach(doc => {
+                const heatStars = '★'.repeat(Math.floor(doc.heat / 20)) + '☆'.repeat(5 - Math.floor(doc.heat / 20));
+
+                html += `
+                    <tr class="hover:bg-[#F9F5FF]">
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <a href="${doc.url}" target="_blank" class="text-sm font-medium text-[#8E7DBE] hover:text-[#7A6DA0]">${doc.title}</a>
+                            <div class="text-xs text-[#8A8AA0] mt-1">${doc.authors}</div>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <div class="text-sm text-[#8A8AA0]">${doc.type}</div>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <div class="text-sm text-[#4A4A68]">${doc.keywords.join(', ')}</div>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <div class="text-sm text-[#8E7DBE]">${heatStars}</div>
+                        </td>
+                    </tr>
+                `;
+            });
+
+            container.innerHTML = html;
+        }
+
+        // 渲染未来技术发展方向
+        function renderFutureTech(mapType) {
+            const container = document.getElementById('futureTechGrid');
+            if (!container) return;
+
+            let futureTechData;
+            switch(mapType) {
+                case 'wash':
+                    futureTechData = washFutureTech;
+                    break;
+                case 'clean':
+                    futureTechData = cleanFutureTech;
+                    break;
+                case 'skin':
+                    futureTechData = skinFutureTech;
+                    break;
+                default:
+                    futureTechData = cleanFutureTech;
+            }
+
+            let html = '';
+            futureTechData.forEach(tech => {
+                const stars = '★'.repeat(tech.heat) + '☆'.repeat(5 - tech.heat);
+                const tagsHtml = tech.tags.map(tag => `<span class="product-tag">${tag}</span>`).join('');
+
+                html += `
+                    <div class="card-hover bg-[var(--light-color)] p-6 rounded-xl border border-[var(--border-color)] shadow-md transition-all duration-300">
+                        <div class="flex items-center mb-4">
+                            <div class="w-12 h-12 rounded-full bg-[var(--accent-color)] flex items-center justify-center mr-4">
+                                <i class="fa ${tech.icon} text-[var(--primary-color)] text-xl"></i>
+                            </div>
+                            <div>
+                                <h3 class="text-lg font-semibold text-[var(--dark-color)]">${tech.title}</h3>
+                                <p class="text-sm text-[var(--text-light)]">热度: <span class="text-[var(--primary-color)] font-medium">${stars}</span></p>
+                            </div>
+                        </div>
+                        <p class="text-[var(--text-color)] text-sm mb-4">${tech.desc}</p>
+                        <div class="flex flex-wrap gap-2 mb-4">
+                            ${tagsHtml}
+                        </div>
+                        <div class="mt-4 pt-4 border-t border-[var(--border-color)]">
+                            <div class="flex justify-between text-sm">
+                                <p class="text-[var(--text-light)] cursor-pointer hover:text-[var(--primary-color)] transition-colors" onclick="showFutureTechDetail('${mapType}', '${tech.title}', 'docs')">
+                                    <i class="fa fa-file-text-o mr-1 text-[var(--primary-color)]"></i>关联文献: ${tech.docs}篇
+                                </p>
+                                <p class="text-[var(--text-light)] cursor-pointer hover:text-[var(--primary-color)] transition-colors" onclick="showFutureTechDetail('${mapType}', '${tech.title}', 'products')">
+                                    <i class="fa fa-shopping-bag mr-1 text-[var(--primary-color)]"></i>应用产品: ${tech.products}款
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+
+            container.innerHTML = html;
+        }
+
+        // 显示未来技术发展方向详情
+        function showFutureTechDetail(mapType, techTitle, type) {
+            let docs, products, techData;
+
+            // 根据地图类型获取相应的数据
+            switch(mapType) {
+                case 'wash':
+                    docs = washDocuments;
+                    products = washProducts;
+                    techData = washFutureTech;
+                    break;
+                case 'clean':
+                    docs = documents;
+                    products = window.products || [];
+                    techData = cleanFutureTech;
+                    break;
+                case 'skin':
+                    docs = skinDocuments;
+                    products = skinProducts;
+                    techData = skinFutureTech;
+                    break;
+                default:
+                    docs = documents;
+                    products = window.products || [];
+                    techData = cleanFutureTech;
+            }
+
+            // 找到当前技术的数据
+            const currentTech = techData.find(tech => tech.title === techTitle);
+            const docCount = currentTech ? currentTech.docs : 3;
+
+            let content = '';
+            if (type === 'docs') {
+                // 按热度排序并根据实际文献数量显示
+                const sortedDocs = [...docs].sort((a, b) => b.heat - a.heat);
+                // 关联文献≥3篇的，详情只显示3篇；＜3篇的，只显示实际数量
+                const displayCount = Math.min(docCount, 3);
+                const displayDocs = sortedDocs.slice(0, displayCount);
+
+                content = `
+                    <div class="p-6">
+                        <h3 class="text-xl font-semibold text-gray-800 mb-4">${techTitle} - 关联文献</h3>
+                        <div class="space-y-4">
+                            ${displayDocs.map(doc => `
+                                <div class="p-4 bg-gray-50 rounded-lg">
+                                    <h4 class="font-medium text-gray-900">${doc.title}</h4>
+                                    <p class="text-sm text-gray-600 mt-1">${doc.type}</p>
+                                    <div class="mt-2 flex flex-wrap gap-2">
+                                        ${doc.keywords.map(keyword => `<span class="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded">${keyword}</span>`).join('')}
+                                    </div>
+                                    <a href="${doc.url}" target="_blank" class="mt-2 inline-block text-blue-600 hover:text-blue-800">查看详情</a>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            } else if (type === 'products') {
+                // 按评分排序并显示相关产品
+                const sortedProducts = [...products].sort((a, b) => b.rating - a.rating);
+                const displayCount = Math.min(currentTech ? currentTech.products : 3, 3);
+                const displayProducts = sortedProducts.slice(0, displayCount);
+
+                content = `
+                    <div class="p-6">
+                        <h3 class="text-xl font-semibold text-gray-800 mb-4">${techTitle} - 应用产品</h3>
+                        <div class="space-y-4">
+                            ${displayProducts.map(product => `
+                                <div class="p-4 bg-gray-50 rounded-lg">
+                                    <h4 class="font-medium text-gray-900">${product.name}</h4>
+                                    <p class="text-sm text-gray-600 mt-1">${product.brand} | ¥${product.price} | ⭐ ${product.rating}</p>
+                                    <p class="text-sm text-gray-700 mt-2">${product.description}</p>
+                                    <div class="mt-2 flex flex-wrap gap-2">
+                                        ${product.techKeywords.map(tech => `<span class="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded">${tech}</span>`).join('')}
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
+            // 创建模态框
+            const modal = document.createElement('div');
+            modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+            modal.innerHTML = `
+                <div class="bg-white rounded-xl p-6 max-w-lg w-full mx-4">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-lg font-semibold text-gray-800">详细信息</h3>
+                        <button onclick="this.closest('.fixed').remove()" class="text-gray-500 hover:text-gray-700">
+                            <i class="fa fa-times"></i>
+                        </button>
+                    </div>
+                    ${content}
+                </div>
+            `;
+            document.body.appendChild(modal);
+        }
+
+        // 渲染创新建议
+        function renderInnovation(mapType) {
+            const container = document.getElementById('innovationGrid');
+            if (!container) return;
+
+            let innovationData;
+            switch(mapType) {
+                case 'wash':
+                    innovationData = washInnovation;
+                    break;
+                case 'clean':
+                    innovationData = cleanInnovation;
+                    break;
+                case 'skin':
+                    innovationData = skinInnovation;
+                    break;
+                default:
+                    innovationData = cleanInnovation;
+            }
+
+            let html = '';
+            innovationData.forEach((innovation, index) => {
+                html += `
+                    <div class="bg-[var(--light-color)] p-6 rounded-xl border border-[var(--border-color)] shadow-md card-hover transition-all duration-300">
+                        <div class="flex items-center mb-4">
+                            <div class="w-8 h-8 rounded-full bg-[var(--primary-color)] flex items-center justify-center mr-3 flex-shrink-0">
+                                <span class="text-white font-medium">${index + 1}</span>
+                            </div>
+                            <h3 class="text-lg font-semibold text-[var(--dark-color)]">${innovation.title}</h3>
+                        </div>
+                        <p class="text-[var(--text-color)] text-sm mb-4">${innovation.desc}</p>
+                        <div class="grid grid-cols-2 gap-4 mb-4">
+                            <div>
+                                <p class="text-xs font-medium text-[var(--text-light)] mb-1">预期收益</p>
+                                <p class="text-sm text-[var(--dark-color)]">${innovation.benefit}</p>
+                            </div>
+                            <div>
+                                <p class="text-xs font-medium text-[var(--text-light)] mb-1">市场潜力</p>
+                                <p class="text-sm text-[var(--dark-color)]">${innovation.potential}</p>
+                            </div>
+                        </div>
+                        <div>
+                            <p class="text-xs font-medium text-[var(--text-light)] mb-1">技术难度</p>
+                            <p class="text-sm text-[var(--dark-color)]">${innovation.difficulty}</p>
+                        </div>
+                    </div>
+                `;
+            });
+
+            container.innerHTML = html;
+        }
+
+        // 爆品脑洞功能
+        function renderBrainstorming(mapType, nodes, products) {
+            // 清空现有内容
+            document.getElementById('benchmarkSelection').innerHTML = '';
+            document.getElementById('priceSelection').innerHTML = '';
+            document.getElementById('skinTypeSelection').innerHTML = '';
+            document.getElementById('skinFeelSelection').innerHTML = '';
+            document.getElementById('functionSelection').innerHTML = '';
+            document.getElementById('techSelection').innerHTML = '';
+            document.getElementById('crowdSelection').innerHTML = '';
+            document.getElementById('brainstormingResult').innerHTML = '';
+            document.getElementById('brainstormingResult').classList.add('hidden');
+            // 清空活性物输入框
+            const ingredientInput = document.getElementById('ingredientInput');
+            if (ingredientInput) ingredientInput.value = '';
+
+            // 1. 渲染标杆选择（市场产品应用分析）
+            renderBenchmarkSelection(products);
+
+            // 2. 渲染价格选择
+            renderPriceSelection();
+
+            // 3. 渲染肤质选择（从市场产品应用分析中消费者满意点选择）
+            renderSkinTypeSelection(products, mapType);
+
+            // 4. 渲染肤感选择
+            renderSkinFeelSelection(mapType);
+
+            // 5. 渲染功效选择
+            renderFunctionSelection();
+
+            // 6. 渲染技术选择（技术关联分析地图）
+            renderTechSelection(nodes);
+
+            // 7. 渲染人群选择
+            renderCrowdSelection();
+
+            // 8. 绑定生成按钮点击事件
+            const generateBtn = document.getElementById('generateBrainstormBtn');
+            if (generateBtn) {
+                generateBtn.onclick = function() {
+                    generateBrainstormingResult(mapType);
+                };
+            }
+        }
+
+        // 渲染标杆选择
+        function renderBenchmarkSelection(products) {
+            const container = document.getElementById('benchmarkSelection');
+            if (!container) return;
+
+            // 按评分排序，选择前6个产品作为标杆
+            const topProducts = [...products].sort((a, b) => b.rating - a.rating).slice(0, 6);
+
+            let html = `
+                <select class="w-full p-3 border border-[var(--border-color)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--primary-color)] focus:border-transparent">
+                    <option value="">请选择标杆产品</option>
+            `;
+            topProducts.forEach(product => {
+                html += `
+                    <option value="${product.name}">${product.name} (${product.brand} | ¥${product.price} | ⭐ ${product.rating})</option>
+                `;
+            });
+            html += `
+                </select>
+            `;
+
+            container.innerHTML = html;
+        }
+
+        // 渲染价格选择
+        function renderPriceSelection() {
+            const container = document.getElementById('priceSelection');
+            if (!container) return;
+
+            const priceRanges = [
+                { label: '经济型', range: '0-50' },
+                { label: '中端', range: '50-100' },
+                { label: '高端', range: '100-200' },
+                { label: '奢侈', range: '200+' }
+            ];
+
+            let html = `
+                <select class="w-full p-3 border border-[var(--border-color)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--primary-color)] focus:border-transparent">
+                    <option value="">请选择价格区间</option>
+            `;
+            priceRanges.forEach(range => {
+                html += `
+                    <option value="${range.label}">${range.label} (¥${range.range})</option>
+                `;
+            });
+            html += `
+                </select>
+            `;
+
+            container.innerHTML = html;
+        }
+
+        // 渲染肤质选择
+        function renderSkinTypeSelection(products, mapType) {
+            const container = document.getElementById('skinTypeSelection');
+            if (!container) return;
+
+            let skinTypeOptions;
+            
+            // 根据地图类型设置不同的肤质选项
+            switch(mapType) {
+                case 'wash':
+                    // 洗护地图：头皮/发质相关选项
+                    skinTypeOptions = [
+                        '油性头皮', '干性头皮', '中性头皮', '敏感头皮',
+                        '油性发质', '干性发质', '中性发质', '受损发质', '混合性发质'
+                    ];
+                    break;
+                case 'clean':
+                    // 洁面地图：面部肤质相关选项
+                    skinTypeOptions = [
+                        '敏感肌', '干性肤质', '油性肤质', '混合性肤质', '中性肤质', '耐受性差肌肤'
+                    ];
+                    break;
+                case 'skin':
+                    // 护肤地图：面部肤质相关选项
+                    skinTypeOptions = [
+                        '敏感肌', '干性肤质', '油性肤质', '混合性肤质', '中性肤质', '熟龄肌', '暗沉肌'
+                    ];
+                    break;
+                default:
+                    // 默认选项
+                    skinTypeOptions = [
+                        '敏感肌', '干性肤质', '油性肤质', '混合性肤质', '中性肤质'
+                    ];
+            }
+
+            let html = `
+                <select class="w-full p-3 border border-[var(--border-color)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--primary-color)] focus:border-transparent">
+                    <option value="">请选择肤质</option>
+            `;
+            skinTypeOptions.forEach(option => {
+                html += `
+                    <option value="${option}">${option}</option>
+                `;
+            });
+            html += `
+                </select>
+            `;
+
+            container.innerHTML = html;
+        }
+
+        // 渲染技术选择
+        function renderTechSelection(nodes) {
+            const container = document.getElementById('techSelection');
+            if (!container) return;
+
+            // 按研究热度排序，选择前6个技术
+            const topTechs = [...nodes].sort((a, b) => b.heat - a.heat).slice(0, 6);
+
+            let html = `
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            `;
+            topTechs.forEach((tech, index) => {
+                html += `
+                    <div class="flex items-start space-x-3 p-3 bg-white rounded-lg border border-[#E8E6F2]">
+                        <input type="checkbox" id="tech-${index}" value="${tech.name}" class="mt-1">
+                        <div class="flex-1">
+                            <label for="tech-${index}" class="font-medium text-[#333344] cursor-pointer">${tech.name}</label>
+                            <p class="text-sm text-[#8E7DBE]">热度: ${tech.heat}</p>
+                            <div class="flex flex-wrap gap-1 mt-2">
+                                ${tech.keywords.map(keyword => `<span class="text-xs px-2 py-1 bg-[#F9F5FF] rounded">${keyword}</span>`).join('')}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+            html += `
+                </div>
+            `;
+
+            container.innerHTML = html;
+        }
+
+        // 渲染活性物选择
+        function renderIngredientSelection(products) {
+            const container = document.getElementById('ingredientSelection');
+            if (!container) return;
+
+            // 提取所有产品的成分
+            const ingredients = new Set();
+            products.forEach(product => {
+                product.ingredients.forEach(ingredient => {
+                    ingredients.add(ingredient);
+                });
+            });
+
+            let html = `
+                <div class="flex flex-wrap gap-3">
+            `;
+            let index = 0;
+            ingredients.forEach(ingredient => {
+                html += `
+                    <div class="flex items-center space-x-2">
+                        <input type="checkbox" id="ingredient-${index}" value="${ingredient}" class="mt-1">
+                        <label for="ingredient-${index}" class="px-4 py-2 rounded-lg bg-[#F9F5FF] cursor-pointer">${ingredient}</label>
+                    </div>
+                `;
+                index++;
+            });
+            html += `
+                </div>
+            `;
+
+            container.innerHTML = html;
+        }
+
+        // 渲染肤感选择
+        function renderSkinFeelSelection(mapType) {
+            const container = document.getElementById('skinFeelSelection');
+            if (!container) return;
+
+            const skinFeelOptions = [
+                '清爽控油', '温和保湿', '滋润修护', '清爽不紧绷', '柔滑细腻', '哑光质感'
+            ];
+
+            let html = `
+                <select class="w-full p-3 border border-[var(--border-color)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--primary-color)] focus:border-transparent">
+                    <option value="">请选择肤感</option>
+            `;
+            skinFeelOptions.forEach(option => {
+                html += `
+                    <option value="${option}">${option}</option>
+                `;
+            });
+            html += `
+                </select>
+            `;
+
+            container.innerHTML = html;
+        }
+
+        // 渲染功效选择
+        function renderFunctionSelection() {
+            const container = document.getElementById('functionSelection');
+            if (!container) return;
+
+            const functionOptions = [
+                '保湿', '修护', '祛斑美白', '防晒', '防脱', '祛痘', 
+                '滋养', '清洁', '卸妆', '芳香', '除臭', '紧致', 
+                '舒缓', '控油', '去角质', '护发', '去屑', '脱毛'
+            ];
+
+            let html = '';
+            functionOptions.forEach(option => {
+                html += `
+                    <label class="flex items-center space-x-2 p-3 border border-[var(--border-color)] rounded-lg hover:bg-[var(--light-color)] cursor-pointer">
+                        <input type="checkbox" value="${option}" class="w-4 h-4 text-[var(--primary-color)] rounded focus:ring-[var(--primary-color)]">
+                        <span class="text-[#333344]">${option}</span>
+                    </label>
+                `;
+            });
+
+            container.innerHTML = html;
+        }
+
+        // 渲染人群选择
+        function renderCrowdSelection() {
+            const container = document.getElementById('crowdSelection');
+            if (!container) return;
+
+            const crowdOptions = [
+                '学生', '职场人士', '孕妇', '宝妈', '男生', '女生', '中老年人', '青少年', '健身爱好者', '户外工作者'
+            ];
+
+            let html = `
+                <select class="w-full p-3 border border-[var(--border-color)] rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--primary-color)] focus:border-transparent">
+                    <option value="">请选择人群</option>
+            `;
+            crowdOptions.forEach(option => {
+                html += `
+                    <option value="${option}">${option}</option>
+                `;
+            });
+            html += `
+                </select>
+            `;
+
+            container.innerHTML = html;
+        }
+
+        // 生成爆品建议
+        function generateBrainstormingResult(mapType) {
+            const resultContainer = document.getElementById('brainstormingResult');
+            if (!resultContainer) return;
+
+            // 获取选中的选项
+            const benchmarkSelect = document.querySelector('#benchmarkSelection select');
+            const priceSelect = document.querySelector('#priceSelection select');
+            const skinTypeSelect = document.querySelector('#skinTypeSelection select');
+            const skinFeelSelect = document.querySelector('#skinFeelSelection select');
+            const functionCheckboxes = document.querySelectorAll('#functionSelection input[type="checkbox"]:checked');
+            const techCheckboxes = document.querySelectorAll('#techSelection input[type="checkbox"]:checked');
+            const ingredientInput = document.getElementById('ingredientInput');
+            const crowdSelect = document.querySelector('#crowdSelection select');
+
+            const selectedBenchmark = benchmarkSelect ? benchmarkSelect.value : '';
+            const selectedPrice = priceSelect ? priceSelect.value : '';
+            const selectedSkinType = skinTypeSelect ? skinTypeSelect.value : '';
+            const selectedSkinFeel = skinFeelSelect ? skinFeelSelect.value : '';
+            const selectedFunctions = Array.from(functionCheckboxes).map(el => el.value);
+            const selectedTech = Array.from(techCheckboxes).map(el => el.value);
+            const selectedIngredients = ingredientInput && ingredientInput.value ? ingredientInput.value.split(/[,，]/).map(s => s.trim()).filter(s => s) : [];
+            const selectedCrowd = crowdSelect ? crowdSelect.value : '';
+
+            // 生成爆品建议
+            let productName = '新型';
+            if (selectedTech.length > 0) {
+                productName += selectedTech.join('+');
+            }
+            
+            // 根据地图类型设置产品名称后缀
+            let productSuffix = '';
+            switch(mapType) {
+                case 'wash':
+                    productSuffix = '洗护产品';
+                    break;
+                case 'clean':
+                    productSuffix = '洁面产品';
+                    break;
+                case 'skin':
+                    productSuffix = '护肤产品';
+                    break;
+                default:
+                    productSuffix = '护肤品';
+            }
+            productName += productSuffix;
+
+            let description = '基于市场需求和技术趋势，我们推出了这款';
+            if (selectedBenchmark) {
+                description += `以${selectedBenchmark}为标杆的`;
+            }
+            description += productName;
+            if (selectedCrowd) {
+                description += `，特别适合${selectedCrowd}人群`;
+            }
+            if (selectedSkinType) {
+                description += `，适合${selectedSkinType}肤质`;
+            }
+            if (selectedSkinFeel) {
+                description += `，追求${selectedSkinFeel}的肤感`;
+            }
+            if (selectedFunctions.length > 0) {
+                description += `，具有${selectedFunctions.join('、')}等功效`;
+            }
+            description += '。';
+
+            let features = [];
+            if (selectedTech.length > 0) {
+                features.push(`采用${selectedTech.join('、')}等技术`);
+            }
+            if (selectedIngredients.length > 0) {
+                features.push(`添加${selectedIngredients.join('、')}等活性物`);
+            }
+            if (selectedSkinType) {
+                features.push(`针对${selectedSkinType}肤质需求`);
+            }
+            if (selectedSkinFeel) {
+                features.push(`提供${selectedSkinFeel}的肤感体验`);
+            }
+            if (selectedFunctions.length > 0) {
+                features.push(`具有${selectedFunctions.join('、')}等功效`);
+            }
+            if (selectedPrice) {
+                features.push(`定价${selectedPrice}`);
+            }
+
+            // 生成HTML
+            let html = `
+                <div class="p-4">
+                    <h3 class="text-lg font-semibold text-[#333344] mb-4">爆品建议</h3>
+                    <div class="mb-4">
+                        <h4 class="font-medium text-[#333344] mb-2">产品名称</h4>
+                        <p class="text-[#4A4A68]">${productName}</p>
+                    </div>
+                    <div class="mb-4">
+                        <h4 class="font-medium text-[#333344] mb-2">产品描述</h4>
+                        <p class="text-[#4A4A68]">${description}</p>
+                    </div>
+                    <div class="mb-4">
+                        <h4 class="font-medium text-[#333344] mb-2">核心卖点</h4>
+                        <ul class="list-disc list-inside text-[#4A4A68] space-y-1">
+                            ${features.map(feature => `<li>${feature}</li>`).join('')}
+                        </ul>
+                    </div>
+                    <div class="mb-4">
+                        <h4 class="font-medium text-[#333344] mb-2">市场潜力</h4>
+                        <p class="text-[#4A4A68]">该产品结合了当前市场热门技术和消费者需求，具有较高的市场潜力。建议进行小规模测试后再大规模推广。</p>
+                    </div>
+                    <div class="mt-6">
+                        <button class="px-6 py-3 bg-gradient-to-r from-[var(--primary-color)] to-[var(--secondary-color)] text-white font-medium rounded-lg hover:opacity-90 transition-all duration-300 w-full" onclick="generateHTMLReport()">
+                            <i class="fa fa-download mr-2"></i>下载分析报告
+                        </button>
+                    </div>
+                </div>
+            `;
+
+            resultContainer.innerHTML = html;
+            resultContainer.classList.remove('hidden');
+        }
+
+
+
+        // 渲染热门技术
+
+
+        // 事件监听器
+        document.addEventListener('DOMContentLoaded', function() {
+            const legendBtn = document.getElementById('legendBtn');
+            const legendModal = document.getElementById('legendModal');
+            const refreshDocsBtn = document.getElementById('refreshDocsBtn');
+            const brainstormingToggle = document.getElementById('brainstormingToggle');
+            const brainstormingSection = document.getElementById('brainstormingSection');
+
+            if (legendBtn) {
+                legendBtn.addEventListener('click', () => legendModal.classList.remove('hidden'));
+            }
+
+            // 爆品脑洞展开/收起功能
+            if (brainstormingToggle && brainstormingSection) {
+                brainstormingToggle.addEventListener('click', function() {
+                    const icon = this.querySelector('i:last-child');
+                    if (brainstormingSection.classList.contains('hidden')) {
+                        brainstormingSection.classList.remove('hidden');
+                        if (icon) icon.className = 'fa fa-chevron-up ml-2 text-sm';
+                    } else {
+                        brainstormingSection.classList.add('hidden');
+                        if (icon) icon.className = 'fa fa-chevron-down ml-2 text-sm';
+                    }
+                });
+            }
+
+            // 初始化默认地图
+            function initDefaultMap() {
+                // 设置默认地图为洗护技术关联分析地图
+                const defaultMapType = 'wash';
+
+                // 更新页面标题
+                document.getElementById('mapTitle').textContent = '洗护技术关联分析地图';
+
+                // 添加默认地图的活动状态
+                const defaultNavLink = document.querySelector(`nav ul li a[data-map="${defaultMapType}"]`);
+                if (defaultNavLink) {
+                    defaultNavLink.classList.add('sidebar-active');
+                }
+
+                // 加载对应地图数据
+                loadMapData(defaultMapType);
+            }
+
+            // 为所有导航链接添加点击事件监听器
+            const allNavLinks = document.querySelectorAll('a[data-map]');
+            allNavLinks.forEach(link => {
+                link.addEventListener('click', function(e) {
+                    e.preventDefault();
+
+                    // 获取地图类型
+                    const mapType = this.getAttribute('data-map');
+
+                    // 移除所有导航项的活动状态
+                    document.querySelectorAll('nav ul li a').forEach(item => item.classList.remove('sidebar-active'));
+
+                    // 找到对应的导航栏链接并添加活动状态
+                    const navLink = document.querySelector(`nav ul li a[data-map="${mapType}"]`);
+                    if (navLink) {
+                        navLink.classList.add('sidebar-active');
+                    }
+
+                    // 加载对应地图数据
+                    loadMapData(mapType);
+                });
+            });
+
+            // 初始化默认地图
+            initDefaultMap();
+
+            // 刷新文献按钮点击事件
+            if (refreshDocsBtn) {
+                refreshDocsBtn.addEventListener('click', function() {
+                    // 获取当前地图类型
+                    const activeNav = document.querySelector('.sidebar-active');
+                    if (activeNav) {
+                        const mapType = activeNav.getAttribute('data-map');
+                        let docs;
+
+                        // 根据地图类型选择文献数据
+                        switch(mapType) {
+                            case 'wash':
+                                docs = washDocuments;
+                                break;
+                            case 'clean':
+                                docs = documents;
+                                break;
+                            case 'skin':
+                                docs = skinDocuments;
+                                break;
+                            default:
+                                docs = documents;
+                                break;
+                        }
+
+                        // 更新文献与技术关联
+                        renderDocTechTable(docs);
+
+                        // 更新未来技术发展方向
+                        renderFutureTech(mapType);
+
+                        // 更新创新建议
+                        renderInnovation(mapType);
+
+                        // 显示刷新成功提示
+                        alert('已刷新文献');
+                    }
+                });
+            }
+        });
+
+        // 生成详细分析报告
+        function generateTextReport() {
+            // 获取选中的选项
+            const benchmarkSelect = document.querySelector('#benchmarkSelection select');
+            const priceSelect = document.querySelector('#priceSelection select');
+            const skinTypeSelect = document.querySelector('#skinTypeSelection select');
+            const skinFeelSelect = document.querySelector('#skinFeelSelection select');
+            const functionCheckboxes = document.querySelectorAll('#functionSelection input[type="checkbox"]:checked');
+            const techCheckboxes = document.querySelectorAll('#techSelection input[type="checkbox"]:checked');
+            const ingredientInput = document.getElementById('ingredientInput');
+            const crowdSelect = document.querySelector('#crowdSelection select');
+
+            const selectedBenchmark = benchmarkSelect ? benchmarkSelect.value : '';
+            const selectedPrice = priceSelect ? priceSelect.value : '';
+            const selectedSkinType = skinTypeSelect ? skinTypeSelect.value : '';
+            const selectedSkinFeel = skinFeelSelect ? skinFeelSelect.value : '';
+            const selectedFunctions = Array.from(functionCheckboxes).map(el => el.value);
+            const selectedTech = Array.from(techCheckboxes).map(el => el.value);
+            const selectedIngredients = ingredientInput && ingredientInput.value ? ingredientInput.value.split(/[,，]/).map(s => s.trim()).filter(s => s) : [];
+            const selectedCrowd = crowdSelect ? crowdSelect.value : '';
+
+            // 获取当前地图类型
+            const activeNav = document.querySelector('.sidebar-active');
+            const mapType = activeNav ? activeNav.getAttribute('data-map') : 'clean';
+
+            // 生成产品名称
+            let productName = '新型';
+            if (selectedTech.length > 0) {
+                productName += selectedTech.join('+');
+            }
+            
+            // 根据地图类型设置产品名称后缀
+            let productSuffix = '';
+            switch(mapType) {
+                case 'wash':
+                    productSuffix = '洗护产品';
+                    break;
+                case 'clean':
+                    productSuffix = '洁面产品';
+                    break;
+                case 'skin':
+                    productSuffix = '护肤产品';
+                    break;
+                default:
+                    productSuffix = '护肤品';
+            }
+            productName += productSuffix;
+
+            // 生成报告内容
+            let reportContent = `
+                <div class="p-6 bg-white rounded-xl shadow-lg">
+                    <h2 class="text-2xl font-bold text-[var(--dark-color)] mb-6">爆品脑洞分析报告</h2>
+                    
+                    <div class="mb-6">
+                        <h3 class="text-lg font-semibold text-[var(--dark-color)] mb-3">基本信息</h3>
+                        <p class="text-[#4A4A68] mb-2"><strong>产品名称:</strong> ${productName}</p>
+                        <p class="text-[#4A4A68]"><strong>生成时间:</strong> ${new Date().toLocaleString()}</p>
+                    </div>
+                    
+                    <div class="mb-6">
+                        <h3 class="text-lg font-semibold text-[var(--dark-color)] mb-3">选择维度</h3>
+                        <ul class="list-disc list-inside text-[#4A4A68] space-y-2">
+                            ${selectedBenchmark ? `<li><strong>标杆产品:</strong> ${selectedBenchmark}</li>` : ''}
+                            ${selectedPrice ? `<li><strong>价格区间:</strong> ${selectedPrice}</li>` : ''}
+                            ${selectedSkinType ? `<li><strong>肤质选择:</strong> ${selectedSkinType}</li>` : ''}
+                            ${selectedSkinFeel ? `<li><strong>肤感选择:</strong> ${selectedSkinFeel}</li>` : ''}
+                            ${selectedFunctions.length > 0 ? `<li><strong>功效选择:</strong> ${selectedFunctions.join(', ')}</li>` : ''}
+                            ${selectedTech.length > 0 ? `<li><strong>技术选择:</strong> ${selectedTech.join(', ')}</li>` : ''}
+                            ${selectedIngredients.length > 0 ? `<li><strong>活性物选择:</strong> ${selectedIngredients.join(', ')}</li>` : ''}
+                            ${selectedCrowd ? `<li><strong>人群选择:</strong> ${selectedCrowd}</li>` : ''}
+                        </ul>
+                    </div>
+                    
+                    <div class="mb-6">
+                        <h3 class="text-lg font-semibold text-[var(--dark-color)] mb-3">产品概念</h3>
+                        <p class="text-[#4A4A68] leading-relaxed">${generateProductConcept(productName, selectedTech, selectedFunctions, selectedSkinFeel, selectedCrowd, mapType)}</p>
+                    </div>
+                    
+                    <div class="mb-6">
+                        <h3 class="text-lg font-semibold text-[var(--dark-color)] mb-3">市场分析</h3>
+                        <p class="text-[#4A4A68] leading-relaxed">${generateMarketAnalysis(selectedFunctions, selectedCrowd, selectedSkinType, mapType)}</p>
+                    </div>
+                    
+                    <div class="mt-8">
+                        <h3 class="text-lg font-semibold text-[var(--dark-color)] mb-3">备注</h3>
+                        <p class="text-[#4A4A68]">此报告基于您的选择生成，可作为产品开发的参考依据。建议在实际生产前进行小规模测试，确保产品质量和市场接受度。</p>
+                    </div>
+                </div>
+            `;
+
+            // 创建并显示报告模态框
+            const modal = document.createElement('div');
+            modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4';
+            modal.innerHTML = `
+                <div class="bg-white rounded-xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+                    <div class="flex justify-between items-center mb-4 p-6 border-b border-gray-200">
+                        <h3 class="text-xl font-semibold text-[var(--dark-color)]">详细分析报告</h3>
+                        <button class="text-[var(--text-light)] hover:text-[var(--dark-color)]" onclick="this.parentElement.parentElement.parentElement.remove()">
+                            <i class="fa fa-times text-xl"></i>
+                        </button>
+                    </div>
+                    <div class="p-6">
+                        ${reportContent}
+                    </div>
+                    <div class="flex justify-end p-6 border-t border-gray-200">
+                        <button class="px-6 py-2 bg-[var(--primary-color)] text-white rounded-lg hover:bg-opacity-90 transition-colors" onclick="this.parentElement.parentElement.parentElement.remove()">
+                            关闭
+                        </button>
+                    </div>
+                </div>
+            `;
+
+            document.body.appendChild(modal);
+        }
+    </script>
+    <script>
+        // 生成产品概念（市场宣传效果）
+        function generateProductConcept(productName, selectedTech, selectedFunctions, selectedSkinFeel, selectedCrowd, mapType) {
+            let concept = '';
+            
+            // 根据地图类型生成不同的产品概念
+            const mapNames = {
+                'wash': '洗护',
+                'clean': '洁面',
+                'skin': '护肤'
+            };
+            
+            const mapName = mapNames[mapType] || '护肤';
+            
+            // 生成主标语
+            concept = `<span class="text-xl font-bold text-[var(--primary-color)] block mb-3">✨ ${productName}</span>`;
+            
+            // 生成产品定位语
+            concept += `<span class="block mb-3">专为${selectedCrowd || '追求品质生活'}打造的${mapName}新品，融合前沿科技与天然精粹，为您带来前所未有的护肤/洗护新体验。</span>`;
+            
+            // 生成功效描述
+            if (selectedFunctions.length > 0) {
+                concept += `<span class="block mb-3">核心功效：${selectedFunctions.join('、')}，多维度呵护肌肤/头发，让您绽放自然光彩。</span>`;
+            }
+            
+            // 生成技术描述
+            if (selectedTech.length > 0) {
+                concept += `<span class="block mb-3">科技亮点：采用${selectedTech.join('、')}等创新技术，确保产品功效与品质的完美融合。</span>`;
+            }
+            
+            // 生成肤感描述
+            if (selectedSkinFeel) {
+                concept += `<span class="block">使用感受：${selectedSkinFeel}的质感，轻盈不黏腻，带来丝滑般的涂抹体验。</span>`;
+            }
+            
+            return concept;
+        }
+        
+        // 生成市场分析
+        function generateMarketAnalysis(selectedFunctions, selectedCrowd, selectedSkinType, mapType) {
+            let analysis = '';
+            
+            // 根据地图类型生成不同的市场分析
+            const mapNames = {
+                'wash': '洗护',
+                'clean': '洁面',
+                'skin': '护肤'
+            };
+            
+            const mapName = mapNames[mapType] || '护肤';
+            
+            // 市场趋势分析
+            analysis += `<span class="block mb-3 font-semibold">📊 市场趋势：</span>`;
+            analysis += `<span class="block mb-3 pl-4">随着消费者对${selectedCrowd || '品质生活'}的追求，${mapName}市场需求持续增长。根据最新市场数据，${mapName}品类年增长率达到15%以上，功能性${mapName}产品更是不负众望，深受消费者青睐。</span>`;
+            
+            // 目标人群分析
+            analysis += `<span class="block mb-3 font-semibold">👥 目标人群分析：</span>`;
+            const crowdDesc = {
+                '学生': '学生群体消费能力有限但追求时尚，对新品牌接受度高',
+                '职场人士': '职场人群注重效率和使用便捷性，愿意为高品质产品买单',
+                '孕妇': '孕妇群体对产品安全性要求极高，注重温和无刺激',
+                '宝妈': '宝妈群体关注产品功效和安全性，具有较强的消费能力',
+                '男生': '男性群体逐渐成为${mapName}市场的重要增长点',
+                '女生': '女性消费者是${mapName}市场的主力军，注重产品功效和品牌',
+                '中老年人': '中老年人群体关注抗衰老和滋养功效',
+                '青少年': '青少年群体皮肤敏感，需要温和配方',
+                '健身爱好者': '健身人群出汗多，需要清洁力强的产品',
+                '户外工作者': '户外工作者需要防护和深层清洁产品'
+            };
+            analysis += `<span class="block mb-3 pl-4">${selectedCrowd ? (crowdDesc[selectedCrowd] || `${selectedCrowd}是一个具有潜力的消费群体`) : '主要目标人群为25-45岁的都市女性消费者'}</span>`;
+            
+            // 功效市场分析
+            if (selectedFunctions.length > 0) {
+                analysis += `<span class="block mb-3 font-semibold">💡 功效市场洞察：</span>`;
+                const functionMarkets = {
+                    '保湿': '保湿是${mapName}市场的长青功效，尤其在干燥季节需求激增',
+                    '修护': '修护类产品市场需求稳步上升，尤其适合敏感肌人群',
+                    '祛斑美白': '美白祛斑是护肤品市场的热门品类，消费者接受度高',
+                    '防晒': '防晒意识增强，防晒市场全年无淡季',
+                    '防脱': '防脱市场增长迅猛，秃头焦虑已成为社会话题',
+                    '祛痘': '痘痘问题困扰着大量年轻人，祛痘市场需求旺盛',
+                    '滋养': '滋养型产品适合干性肌肤，秋冬季节尤为畅销',
+                    '清洁': '深层清洁是${mapName}的第一步，市场需求稳定',
+                    '卸妆': '化妆人群扩大，卸妆产品成为刚需',
+                    '芳香': '香氛${mapName}产品带来愉悦体验，市场增长迅速',
+                    '除臭': '除臭产品需求持续增长，尤其在夏季',
+                    '紧致': '抗衰老市场持续火热，紧致类功效产品备受关注',
+                    '舒缓': '舒缓类产品适合敏感肌和换季时期',
+                    '控油': '油性肌肤人群对控油产品需求大',
+                    '去角质': '去角质是护肤的重要步骤，市场需求稳定',
+                    '护发': '护发市场庞大，尤其注重发质修护',
+                    '去屑': '去屑洗发水是刚需，市场容量大',
+                    '脱毛': '脱毛市场增长迅速，尤其是夏季'
+                };
+                analysis += `<span class="block pl-4">${selectedFunctions.map(f => functionMarkets[f] || `${f}是一个具有潜力的功效方向`).join('；')}</span>`;
+            }
+            
+            // 竞争格局
+            analysis += `<span class="block mb-3 font-semibold">🏆 竞争格局：</span>`;
+            analysis += `<span class="block pl-4">当前${mapName}市场竞争激烈，国际品牌占据高端市场，本土品牌在中端市场表现突出。新品牌需要找准差异化定位，通过产品创新和精准营销突围。</span>`;
+            
+            // 发展建议
+            analysis += `<span class="block font-semibold">💎 发展建议：</span>`;
+            analysis += `<span class="block pl-4">建议通过社交媒体营销、KOL合作、功效差异化等策略快速建立品牌认知，同时注重产品品质和用户体验，建立良好的口碑。</span>`;
+            
+            return analysis;
+        }
+        
+        // 生成HTML报告文档
+        function generateHTMLReport() {
+            try {
+                // 获取选中的选项
+                const benchmarkSelect = document.querySelector('#benchmarkSelection select');
+                const priceSelect = document.querySelector('#priceSelection select');
+                const skinTypeSelect = document.querySelector('#skinTypeSelection select');
+                const skinFeelSelect = document.querySelector('#skinFeelSelection select');
+                const functionCheckboxes = document.querySelectorAll('#functionSelection input[type="checkbox"]:checked');
+                const techCheckboxes = document.querySelectorAll('#techSelection input[type="checkbox"]:checked');
+                const ingredientInput = document.getElementById('ingredientInput');
+                const crowdSelect = document.querySelector('#crowdSelection select');
+
+                const selectedBenchmark = benchmarkSelect ? benchmarkSelect.value : '';
+                const selectedPrice = priceSelect ? priceSelect.value : '';
+                const selectedSkinType = skinTypeSelect ? skinTypeSelect.value : '';
+                const selectedSkinFeel = skinFeelSelect ? skinFeelSelect.value : '';
+                const selectedFunctions = Array.from(functionCheckboxes).map(el => el.value);
+                const selectedTech = Array.from(techCheckboxes).map(el => el.value);
+                const selectedIngredients = ingredientInput && ingredientInput.value ? ingredientInput.value.split(/[,，]/).map(s => s.trim()).filter(s => s) : [];
+                const selectedCrowd = crowdSelect ? crowdSelect.value : '';
+
+                // 获取当前地图类型
+                const activeNav = document.querySelector('.sidebar-active');
+                const mapType = activeNav ? activeNav.getAttribute('data-map') : 'clean';
+
+                // 生成产品名称
+                let productName = '新型';
+                if (selectedTech.length > 0) {
+                    productName += selectedTech.join('+');
+                }
+                
+                // 根据地图类型设置产品名称后缀
+                let productSuffix = '';
+                switch(mapType) {
+                    case 'wash':
+                        productSuffix = '洗护产品';
+                        break;
+                    case 'clean':
+                        productSuffix = '洁面产品';
+                        break;
+                    case 'skin':
+                        productSuffix = '护肤产品';
+                        break;
+                    default:
+                        productSuffix = '护肤品';
+                }
+                productName += productSuffix;
+
+                // 地图名称映射
+                const mapNames = {
+                    'wash': '洗护',
+                    'clean': '洁面',
+                    'skin': '护肤'
+                };
+                const mapName = mapNames[mapType] || '护肤';
+
+                // 人群描述
+                const crowdDesc = {
+                    '学生': '学生群体消费能力有限但追求时尚，对新品牌接受度高',
+                    '职场人士': '职场人群注重效率和使用便捷性，愿意为高品质产品买单',
+                    '孕妇': '孕妇群体对产品安全性要求极高，注重温和无刺激',
+                    '宝妈': '宝妈群体关注产品功效和安全性，具有较强的消费能力',
+                    '男生': '男性群体逐渐成为'+ mapName +'市场的重要增长点',
+                    '女生': '女性消费者是'+ mapName +'市场的主力军，注重产品功效和品牌',
+                    '中老年人': '中老年人群体关注抗衰老和滋养功效',
+                    '青少年': '青少年群体皮肤敏感，需要温和配方',
+                    '健身爱好者': '健身人群出汗多，需要清洁力强的产品',
+                    '户外工作者': '户外工作者需要防护和深层清洁产品'
+                };
+
+                // 功效市场分析
+                const functionMarkets = {
+                    '保湿': '保湿是'+ mapName +'市场的长青功效，尤其在干燥季节需求激增',
+                    '修护': '修护类产品市场需求稳步上升，尤其适合敏感肌人群',
+                    '祛斑美白': '美白祛斑是护肤品市场的热门品类，消费者接受度高',
+                    '防晒': '防晒意识增强，防晒市场全年无淡季',
+                    '防脱': '防脱市场增长迅猛，秃头焦虑已成为社会话题',
+                    '祛痘': '痘痘问题困扰着大量年轻人，祛痘市场需求旺盛',
+                    '滋养': '滋养型产品适合干性肌肤，秋冬季节尤为畅销',
+                    '清洁': '深层清洁是'+ mapName +'的第一步，市场需求稳定',
+                    '卸妆': '化妆人群扩大，卸妆产品成为刚需',
+                    '芳香': '香氛'+ mapName +'产品带来愉悦体验，市场增长迅速',
+                    '除臭': '除臭产品需求持续增长，尤其在夏季',
+                    '紧致': '抗衰老市场持续火热，紧致类功效产品备受关注',
+                    '舒缓': '舒缓类产品适合敏感肌和换季时期',
+                    '控油': '油性肌肤人群对控油产品需求大',
+                    '去角质': '去角质是护肤的重要步骤，市场需求稳定',
+                    '护发': '护发市场庞大，尤其注重发质修护',
+                    '去屑': '去屑洗发水是刚需，市场容量大',
+                    '脱毛': '脱毛市场增长迅速，尤其是夏季'
+                };
+
+                // 生成HTML内容
+                const htmlContent = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>爆品脑洞分析报告 - ${productName}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Microsoft YaHei', 'PingFang SC', 'Hiragino Sans GB', sans-serif;
+            line-height: 1.8;
+            color: #333;
+            background: linear-gradient(135deg, #f5f7fa 0%, #e4e8ec 100%);
+            padding: 40px 20px;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            text-align: center;
+        }
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+        .header .subtitle {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+        .content {
+            padding: 40px;
+        }
+        .section {
+            margin-bottom: 35px;
+            padding: 25px;
+            background: #f8f9fa;
+            border-radius: 12px;
+            border-left: 4px solid #667eea;
+        }
+        .section-title {
+            font-size: 18px;
+            color: #667eea;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+        }
+        .section-title::before {
+            content: '📌';
+            margin-right: 8px;
+        }
+        .section:nth-child(2) .section-title::before { content: '💡'; border-left-color: #f093fb; }
+        .section:nth-child(3) .section-title::before { content: '📊'; border-left-color: #4facfe; }
+        .section:nth-child(4) .section-title::before { content: '📋'; border-left-color: #43e97b; }
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+        }
+        .info-item {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+        .info-item label {
+            display: block;
+            font-size: 12px;
+            color: #999;
+            margin-bottom: 5px;
+        }
+        .info-item span {
+            font-size: 14px;
+            color: #333;
+            font-weight: 500;
+        }
+        .highlight {
+            background: linear-gradient(120deg, #a8edea 0%, #fed6e3 100%);
+            padding: 20px;
+            border-radius: 10px;
+            margin: 15px 0;
+        }
+        .highlight-title {
+            font-size: 16px;
+            font-weight: bold;
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+        .footer {
+            background: #f8f9fa;
+            padding: 20px 40px;
+            text-align: center;
+            font-size: 12px;
+            color: #999;
+        }
+        .print-btn {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 14px;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+        @media print {
+            body {
+                background: white;
+                padding: 0;
+            }
+            .container {
+                box-shadow: none;
+            }
+            .print-btn {
+                display: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <button class="print-btn" onclick="window.print()">🖨️ 打印报告</button>
+    
+    <div class="container">
+        <div class="header">
+            <h1>爆品脑洞分析报告</h1>
+            <div class="subtitle">${productName} | 生成时间：${new Date().toLocaleString()}</div>
+        </div>
+        
+        <div class="content">
+            <div class="section">
+                <div class="section-title">产品概念</div>
+                <div class="highlight">
+                    <div class="highlight-title">✨ ${productName}</div>
+                    <p style="margin-bottom: 10px;">专为${selectedCrowd || '追求品质生活'}打造的${mapName}新品，融合前沿科技与天然精粹，为您带来前所未有的${mapName}新体验。</p>
+                    ${selectedFunctions.length > 0 ? `<p style="margin-bottom: 10px;"><strong>核心功效：</strong>${selectedFunctions.join('、')}，多维度呵护肌肤/头发，让您绽放自然光彩。</p>` : ''}
+                    ${selectedTech.length > 0 ? `<p style="margin-bottom: 10px;"><strong>科技亮点：</strong>采用${selectedTech.join('、')}等创新技术，确保产品功效与品质的完美融合。</p>` : ''}
+                    ${selectedSkinFeel ? `<p><strong>使用感受：</strong>${selectedSkinFeel}的质感，轻盈不黏腻，带来丝滑般的涂抹体验。</p>` : ''}
+                </div>
+            </div>
+            
+            <div class="section">
+                <div class="section-title">市场分析</div>
+                <div style="margin-bottom: 15px;">
+                    <strong>📊 市场趋势：</strong>
+                    <p style="margin-top: 5px; padding-left: 10px;">随着消费者对${selectedCrowd || '品质生活'}的追求，${mapName}市场需求持续增长。根据最新市场数据，${mapName}品类年增长率达到15%以上，功能性${mapName}产品更是不负众望，深受消费者青睐。</p>
+                </div>
+                <div style="margin-bottom: 15px;">
+                    <strong>👥 目标人群分析：</strong>
+                    <p style="margin-top: 5px; padding-left: 10px;">${selectedCrowd ? (crowdDesc[selectedCrowd] || `${selectedCrowd}是一个具有潜力的消费群体`) : '主要目标人群为25-45岁的都市女性消费者'}</p>
+                </div>
+                ${selectedFunctions.length > 0 ? `
+                <div style="margin-bottom: 15px;">
+                    <strong>💡 功效市场洞察：</strong>
+                    <p style="margin-top: 5px; padding-left: 10px;">${selectedFunctions.map(f => functionMarkets[f] || `${f}是一个具有潜力的功效方向`).join('；')}</p>
+                </div>
+                ` : ''}
+                <div style="margin-bottom: 15px;">
+                    <strong>🏆 竞争格局：</strong>
+                    <p style="margin-top: 5px; padding-left: 10px;">当前${mapName}市场竞争激烈，国际品牌占据高端市场，本土品牌在中端市场表现突出。新品牌需要找准差异化定位，通过产品创新和精准营销突围。</p>
+                </div>
+                <div>
+                    <strong>💎 发展建议：</strong>
+                    <p style="margin-top: 5px; padding-left: 10px;">建议通过社交媒体营销、KOL合作、功效差异化等策略快速建立品牌认知，同时注重产品品质和用户体验，建立良好的口碑。</p>
+                </div>
+            </div>
+            
+            <div class="section">
+                <div class="section-title">选择维度</div>
+                <div class="info-grid">
+                    ${selectedBenchmark ? `<div class="info-item"><label>标杆产品</label><span>${selectedBenchmark}</span></div>` : ''}
+                    ${selectedPrice ? `<div class="info-item"><label>价格区间</label><span>${selectedPrice}</span></div>` : ''}
+                    ${selectedSkinType ? `<div class="info-item"><label>肤质选择</label><span>${selectedSkinType}</span></div>` : ''}
+                    ${selectedSkinFeel ? `<div class="info-item"><label>肤感选择</label><span>${selectedSkinFeel}</span></div>` : ''}
+                    ${selectedCrowd ? `<div class="info-item"><label>人群选择</label><span>${selectedCrowd}</span></div>` : ''}
+                </div>
+                ${selectedFunctions.length > 0 ? `
+                <div style="margin-top: 15px;">
+                    <label style="display: block; font-size: 12px; color: #999; margin-bottom: 5px;">功效选择</label>
+                    <span style="font-size: 14px; color: #333;">${selectedFunctions.join('、')}</span>
+                </div>
+                ` : ''}
+                ${selectedTech.length > 0 ? `
+                <div style="margin-top: 15px;">
+                    <label style="display: block; font-size: 12px; color: #999; margin-bottom: 5px;">技术选择</label>
+                    <span style="font-size: 14px; color: #333;">${selectedTech.join('、')}</span>
+                </div>
+                ` : ''}
+                ${selectedIngredients.length > 0 ? `
+                <div style="margin-top: 15px;">
+                    <label style="display: block; font-size: 12px; color: #999; margin-bottom: 5px;">活性物选择</label>
+                    <span style="font-size: 14px; color: #333;">${selectedIngredients.join('、')}</span>
+                </div>
+                ` : ''}
+            </div>
+            
+            <div class="section">
+                <div class="section-title">备注</div>
+                <p>此报告基于您的选择生成，可作为产品开发的参考依据。建议在实际生产前进行小规模测试，确保产品质量和市场接受度。</p>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p>本报告由爆品脑洞分析系统生成 | 仅供内部参考</p>
+        </div>
+    </div>
+</body>
+</html>`;
+
+                // 创建Blob对象
+                const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+                const url = URL.createObjectURL(blob);
+                
+                // 创建下载链接
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `爆品脑洞分析报告_${productName}_${new Date().getTime()}.html`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                
+                // 释放URL对象
+                URL.revokeObjectURL(url);
+            } catch (error) {
+                console.error('生成报告时出错:', error);
+                alert('生成报告时出错，请稍后重试。');
+            }
+        }
+    </script>
+</body>
+</html>
